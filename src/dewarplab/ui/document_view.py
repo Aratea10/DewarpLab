@@ -1,5 +1,12 @@
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QImage,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -8,6 +15,8 @@ from PySide6.QtWidgets import (
 
 
 class DocumentView(QGraphicsView):
+    file_dropped = Signal(str)
+
     ZOOM_FACTOR = 1.2
 
     def __init__(self, parent=None):
@@ -17,6 +26,7 @@ class DocumentView(QGraphicsView):
         self._pixmap_item: QGraphicsPixmapItem | None = None
 
         self.setScene(self._scene)
+        self.setAcceptDrops(True)
 
         self.setRenderHint(
             QPainter.RenderHint.SmoothPixmapTransform,
@@ -76,3 +86,47 @@ class DocumentView(QGraphicsView):
             1.0 / self.ZOOM_FACTOR,
             1.0 / self.ZOOM_FACTOR,
         )
+
+    def dragEnterEvent(
+        self,
+        event: QDragEnterEvent,
+    ) -> None:
+        urls = event.mimeData().urls()
+
+        if len(urls) == 1 and urls[0].isLocalFile():
+            event.acceptProposedAction()
+            return
+
+        event.ignore()
+
+    def dragMoveEvent(
+        self,
+        event: QDragMoveEvent,
+    ) -> None:
+        urls = event.mimeData().urls()
+
+        if len(urls) == 1 and urls[0].isLocalFile():
+            event.acceptProposedAction()
+            return
+
+        event.ignore()
+
+    def dropEvent(
+        self,
+        event: QDropEvent,
+    ) -> None:
+        urls = event.mimeData().urls()
+
+        if len(urls) != 1:
+            event.ignore()
+            return
+
+        path = urls[0].toLocalFile()
+
+        if not path:
+            event.ignore()
+            return
+
+        self.file_dropped.emit(path)
+
+        event.acceptProposedAction()
