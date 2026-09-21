@@ -5,6 +5,7 @@ from PySide6.QtGui import (
     QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
+    QFont,
     QKeySequence,
 )
 from PySide6.QtWidgets import (
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 from dewarplab.adapters.documents.document_loader import (
     DocumentLoadError,
     LoadedDocument,
+    SUPPORTED_EXTENSIONS,
     is_supported_document,
     load_document,
     render_page,
@@ -41,12 +43,14 @@ class MainWindow(QMainWindow):
 
         self._view.file_dropped.connect(self.open_document)
 
+        self._view.browse_requested.connect(self._open_document_dialog)
+
         self.setCentralWidget(self._view)
 
         self._create_actions()
         self._create_toolbar()
 
-        self.statusBar().showMessage("Arrastra un documento aquí o pulsa Abrir.")
+        self.statusBar().hide()
 
     def _create_actions(self) -> None:
         self._open_action = QAction(
@@ -90,12 +94,14 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setMinimumHeight(40)
 
-        toolbar_font = toolbar.font()
+        base_font = toolbar.font()
 
-        if toolbar_font.pointSizeF() > 0:
-            toolbar_font.setPointSizeF(toolbar_font.pointSizeF() + 1.5)
+        action_font = QFont(base_font)
 
-        toolbar.setFont(toolbar_font)
+        if action_font.pointSizeF() > 0:
+            action_font.setPointSizeF(action_font.pointSizeF() + 0.5)
+
+        toolbar.setFont(action_font)
 
         self.addToolBar(toolbar)
 
@@ -111,15 +117,24 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        page_font = QFont(base_font)
+
+        if page_font.pointSizeF() > 0:
+            page_font.setPointSizeF(page_font.pointSizeF() + 1.5)
+
         self._page_label = QLabel("Página: ")
 
-        self._page_label.setFont(toolbar_font)
+        self._page_label.setFont(base_font)
 
         toolbar.addWidget(self._page_label)
 
         self._page_spinbox = QSpinBox(self)
 
-        self._page_spinbox.setFont(toolbar_font)
+        self._page_spinbox.setFont(page_font)
+
+        self._page_spinbox.setMinimumWidth(58)
+
+        self._page_spinbox.setMinimumHeight(28)
 
         self._page_spinbox.setMinimum(1)
         self._page_spinbox.setMaximum(1)
@@ -141,11 +156,15 @@ class MainWindow(QMainWindow):
         self._fit_action.setEnabled(enabled)
 
     def _open_document_dialog(self) -> None:
+        patterns = " ".join(
+            f"*{extension}" for extension in sorted(SUPPORTED_EXTENSIONS)
+        )
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Abrir documento",
             "",
-            ("Documentos compatibles " "(*.png *.jpg *.jpeg *.tif *.tiff *.pdf)"),
+            ("Documentos compatibles " f"({patterns})"),
         )
 
         if path:
@@ -181,7 +200,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"DewarpLab — {document.path.name}")
 
-    def _configure_page_selector(self) -> None:
+    def _configure_page_selector(
+        self,
+    ) -> None:
         if self._document is None:
             self._page_spinbox.setEnabled(False)
 
@@ -207,7 +228,9 @@ class MainWindow(QMainWindow):
 
         self._render_current_page()
 
-    def _render_current_page(self) -> None:
+    def _render_current_page(
+        self,
+    ) -> None:
         if self._document is None:
             return
 
@@ -235,6 +258,8 @@ class MainWindow(QMainWindow):
             )
         else:
             page_text = "Imagen"
+
+        self.statusBar().show()
 
         self.statusBar().showMessage(
             f"{self._document.path.name} — "
