@@ -10,6 +10,8 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".png",
     ".jpg",
     ".jpeg",
+    ".tif",
+    ".tiff",
 }
 
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | {
@@ -70,7 +72,7 @@ def load_document(path: str | Path) -> LoadedDocument:
     if suffix == ".pdf":
         return _load_pdf(document_path)
 
-    raise DocumentLoadError("Formato no compatible. Usa PNG, JPG, JPEG o PDF.")
+    raise DocumentLoadError("Formato no compatible. Usa PNG, JPG, JPEG, TIFF o PDF.")
 
 
 def render_page(
