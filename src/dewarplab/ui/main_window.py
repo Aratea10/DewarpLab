@@ -1,20 +1,23 @@
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
     QFont,
+    QIntValidator,
     QKeySequence,
 )
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
-    QSpinBox,
     QToolBar,
+    QToolButton,
 )
 
 from dewarplab.adapters.documents.document_loader import (
@@ -45,10 +48,16 @@ class MainWindow(QMainWindow):
 
         self._view.browse_requested.connect(self._open_document_dialog)
 
+        self._view.zoom_changed.connect(self._update_zoom_label)
+
         self.setCentralWidget(self._view)
 
         self._create_actions()
         self._create_toolbar()
+
+        self._set_document_actions_enabled(False)
+
+        self._update_page_controls()
 
         self.statusBar().hide()
 
@@ -83,8 +92,6 @@ class MainWindow(QMainWindow):
 
         self._fit_action.triggered.connect(self._view.fit_document)
 
-        self._set_document_actions_enabled(False)
-
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(
             "Documento",
@@ -111,39 +118,89 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction(self._zoom_out_action)
 
+        self._zoom_label = QLabel("—")
+
+        self._zoom_label.setFont(action_font)
+
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._zoom_label.setMinimumWidth(54)
+
+        toolbar.addWidget(self._zoom_label)
+
         toolbar.addAction(self._zoom_in_action)
 
         toolbar.addAction(self._fit_action)
 
         toolbar.addSeparator()
 
-        page_font = QFont(base_font)
-
-        if page_font.pointSizeF() > 0:
-            page_font.setPointSizeF(page_font.pointSizeF() + 1.5)
-
-        self._page_label = QLabel("Página: ")
+        self._page_label = QLabel("Página:")
 
         self._page_label.setFont(base_font)
 
         toolbar.addWidget(self._page_label)
 
-        self._page_spinbox = QSpinBox(self)
+        self._previous_page_button = QToolButton(self)
 
-        self._page_spinbox.setFont(page_font)
+        self._previous_page_button.setText("‹")
 
-        self._page_spinbox.setMinimumWidth(58)
+        self._previous_page_button.setToolTip("Página anterior")
 
-        self._page_spinbox.setMinimumHeight(28)
+        self._previous_page_button.clicked.connect(self._go_to_previous_page)
 
-        self._page_spinbox.setMinimum(1)
-        self._page_spinbox.setMaximum(1)
-        self._page_spinbox.setValue(1)
-        self._page_spinbox.setEnabled(False)
+        toolbar.addWidget(self._previous_page_button)
 
-        self._page_spinbox.valueChanged.connect(self._page_changed)
+        page_number_font = QFont(base_font)
 
-        toolbar.addWidget(self._page_spinbox)
+        if page_number_font.pointSizeF() > 0:
+            page_number_font.setPointSizeF(page_number_font.pointSizeF() + 1.5)
+
+        self._page_number_edit = QLineEdit(self)
+
+        self._page_number_edit.setFont(page_number_font)
+
+        self._page_number_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._page_number_edit.setFixedWidth(42)
+
+        self._page_number_edit.setMinimumHeight(28)
+
+        self._page_number_edit.setTextMargins(
+            4,
+            0,
+            4,
+            0,
+        )
+
+        self._page_number_validator = QIntValidator(
+            1,
+            1,
+            self,
+        )
+
+        self._page_number_edit.setValidator(self._page_number_validator)
+
+        self._page_number_edit.returnPressed.connect(self._commit_page_number)
+
+        self._page_number_edit.editingFinished.connect(self._commit_page_number)
+
+        toolbar.addWidget(self._page_number_edit)
+
+        self._page_total_label = QLabel("/ 1")
+
+        self._page_total_label.setFont(base_font)
+
+        toolbar.addWidget(self._page_total_label)
+
+        self._next_page_button = QToolButton(self)
+
+        self._next_page_button.setText("›")
+
+        self._next_page_button.setToolTip("Página siguiente")
+
+        self._next_page_button.clicked.connect(self._go_to_next_page)
+
+        toolbar.addWidget(self._next_page_button)
 
     def _set_document_actions_enabled(
         self,
@@ -154,6 +211,15 @@ class MainWindow(QMainWindow):
         self._zoom_in_action.setEnabled(enabled)
 
         self._fit_action.setEnabled(enabled)
+
+        if not enabled:
+            self._zoom_label.setText("—")
+
+    def _update_zoom_label(
+        self,
+        percentage: int,
+    ) -> None:
+        self._zoom_label.setText(f"{percentage}%")
 
     def _open_document_dialog(self) -> None:
         patterns = " ".join(
@@ -182,7 +248,6 @@ class MainWindow(QMainWindow):
                 "No se pudo abrir el documento",
                 str(error),
             )
-
             return
 
         previous_document = self._document
@@ -204,29 +269,105 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         if self._document is None:
-            self._page_spinbox.setEnabled(False)
+            self._page_number_validator.setRange(
+                1,
+                1,
+            )
 
+            self._update_page_controls()
             return
 
-        self._page_spinbox.blockSignals(True)
+        self._page_number_validator.setRange(
+            1,
+            self._document.page_count,
+        )
 
-        self._page_spinbox.setMinimum(1)
+        self._update_page_controls()
 
-        self._page_spinbox.setMaximum(self._document.page_count)
-
-        self._page_spinbox.setValue(1)
-
-        self._page_spinbox.blockSignals(False)
-
-        self._page_spinbox.setEnabled(self._document.page_count > 1)
-
-    def _page_changed(
+    def _update_page_controls(
         self,
-        page_number: int,
     ) -> None:
-        self._current_page_index = page_number - 1
+        if self._document is None:
+            current_page = 1
+            page_count = 1
+            has_document = False
+        else:
+            current_page = self._current_page_index + 1
+
+            page_count = self._document.page_count
+
+            has_document = True
+
+        self._page_number_edit.setText(str(current_page))
+
+        self._page_total_label.setText(f"/ {page_count}")
+
+        self._page_number_edit.setEnabled(has_document and page_count > 1)
+
+        self._previous_page_button.setEnabled(has_document and current_page > 1)
+
+        self._next_page_button.setEnabled(has_document and current_page < page_count)
+
+    def _go_to_previous_page(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        if self._current_page_index <= 0:
+            return
+
+        self._current_page_index -= 1
 
         self._render_current_page()
+        self._update_page_controls()
+
+    def _go_to_next_page(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        if self._current_page_index >= self._document.page_count - 1:
+            return
+
+        self._current_page_index += 1
+
+        self._render_current_page()
+        self._update_page_controls()
+
+    def _commit_page_number(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        text = self._page_number_edit.text().strip()
+
+        if not text:
+            self._update_page_controls()
+            return
+
+        page_number = int(text)
+
+        page_number = max(
+            1,
+            min(
+                self._document.page_count,
+                page_number,
+            ),
+        )
+
+        page_index = page_number - 1
+
+        if page_index == self._current_page_index:
+            self._update_page_controls()
+            return
+
+        self._current_page_index = page_index
+
+        self._render_current_page()
+        self._update_page_controls()
 
     def _render_current_page(
         self,
@@ -245,16 +386,18 @@ class MainWindow(QMainWindow):
                 "No se pudo mostrar la página",
                 str(error),
             )
-
             return
 
         self._view.set_image(image)
+
+        self._update_page_controls()
 
         if self._document.is_pdf:
             page_text = (
                 f"Página "
                 f"{self._current_page_index + 1} "
-                f"de {self._document.page_count}"
+                f"de "
+                f"{self._document.page_count}"
             )
         else:
             page_text = "Imagen"

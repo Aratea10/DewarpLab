@@ -1,4 +1,10 @@
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPointF,
+    QRectF,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -8,6 +14,7 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QImage,
     QMouseEvent,
+    QNativeGestureEvent,
     QPainter,
     QPainterPath,
     QPalette,
@@ -24,8 +31,11 @@ from PySide6.QtWidgets import (
 class DocumentView(QGraphicsView):
     file_dropped = Signal(str)
     browse_requested = Signal()
+    zoom_changed = Signal(int)
 
     ZOOM_FACTOR = 1.2
+    MIN_ZOOM_SCALE = 0.02
+    MAX_ZOOM_SCALE = 8.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,11 +78,15 @@ class DocumentView(QGraphicsView):
 
     def clear_document(self) -> None:
         self._scene.clear()
+
         self._pixmap_item = None
         self._drag_active = False
         self._browse_rect = QRectF()
 
         self.resetTransform()
+
+        self.zoom_changed.emit(100)
+
         self.viewport().update()
 
     def fit_document(self) -> None:
@@ -86,23 +100,117 @@ class DocumentView(QGraphicsView):
             Qt.AspectRatioMode.KeepAspectRatio,
         )
 
-    def zoom_in(self) -> None:
-        if self._pixmap_item is None:
-            return
+        current_scale = self._current_zoom_scale()
 
-        self.scale(
-            self.ZOOM_FACTOR,
-            self.ZOOM_FACTOR,
-        )
+        if current_scale > self.MAX_ZOOM_SCALE:
+            self.resetTransform()
+
+            self.scale(
+                self.MAX_ZOOM_SCALE,
+                self.MAX_ZOOM_SCALE,
+            )
+
+            self.centerOn(self._pixmap_item)
+
+        self._emit_zoom_changed()
+
+    def zoom_in(self) -> None:
+        self._apply_zoom_factor(self.ZOOM_FACTOR)
 
     def zoom_out(self) -> None:
+        self._apply_zoom_factor(1.0 / self.ZOOM_FACTOR)
+
+    def _current_zoom_scale(self) -> float:
+        return self.transform().m11()
+
+    def _emit_zoom_changed(self) -> None:
+        zoom_percentage = round(self._current_zoom_scale() * 100)
+
+        self.zoom_changed.emit(zoom_percentage)
+
+    def _apply_zoom_factor(
+        self,
+        factor: float,
+        anchor_position: QPointF | None = None,
+    ) -> None:
         if self._pixmap_item is None:
             return
 
-        self.scale(
-            1.0 / self.ZOOM_FACTOR,
-            1.0 / self.ZOOM_FACTOR,
+        if factor <= 0:
+            return
+
+        current_scale = self._current_zoom_scale()
+
+        if current_scale <= 0:
+            return
+
+        target_scale = current_scale * factor
+
+        target_scale = max(
+            self.MIN_ZOOM_SCALE,
+            min(
+                self.MAX_ZOOM_SCALE,
+                target_scale,
+            ),
         )
+
+        actual_factor = target_scale / current_scale
+
+        if abs(actual_factor - 1.0) < 0.000001:
+            return
+
+        if anchor_position is None:
+            self.scale(
+                actual_factor,
+                actual_factor,
+            )
+
+            self._emit_zoom_changed()
+            return
+
+        scene_position_before = self.mapToScene(anchor_position.toPoint())
+
+        self.scale(
+            actual_factor,
+            actual_factor,
+        )
+
+        scene_position_after = self.mapToScene(anchor_position.toPoint())
+
+        position_delta = scene_position_after - scene_position_before
+
+        self.translate(
+            position_delta.x(),
+            position_delta.y(),
+        )
+
+        self._emit_zoom_changed()
+
+    def viewportEvent(
+        self,
+        event: QEvent,
+    ) -> bool:
+        if (
+            self._pixmap_item is not None
+            and event.type() == QEvent.Type.NativeGesture
+            and isinstance(
+                event,
+                QNativeGestureEvent,
+            )
+            and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture
+        ):
+            zoom_factor = 1.0 + event.value()
+
+            self._apply_zoom_factor(
+                zoom_factor,
+                event.position(),
+            )
+
+            event.accept()
+
+            return True
+
+        return super().viewportEvent(event)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -262,6 +370,7 @@ class DocumentView(QGraphicsView):
 
         if self._drag_active:
             self._browse_rect = QRectF()
+
             return
 
         secondary_font = QFont(primary_font)
@@ -348,6 +457,7 @@ class DocumentView(QGraphicsView):
             self.browse_requested.emit()
 
             event.accept()
+
             return
 
         super().mousePressEvent(event)
@@ -363,6 +473,7 @@ class DocumentView(QGraphicsView):
             self.viewport().update()
 
             event.acceptProposedAction()
+
             return
 
         event.ignore()
@@ -375,6 +486,7 @@ class DocumentView(QGraphicsView):
 
         if len(urls) == 1 and urls[0].isLocalFile():
             event.acceptProposedAction()
+
             return
 
         event.ignore()
@@ -399,12 +511,14 @@ class DocumentView(QGraphicsView):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
+
             return
 
         self.file_dropped.emit(path)
