@@ -6,6 +6,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QColor,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
@@ -13,6 +14,7 @@ from PySide6.QtGui import (
     QFont,
     QFontMetricsF,
     QImage,
+    QKeyEvent,
     QMouseEvent,
     QNativeGestureEvent,
     QPainter,
@@ -42,14 +44,25 @@ class DocumentView(QGraphicsView):
     MIN_ZOOM_SCALE = 0.02
     MAX_ZOOM_SCALE = 8.0
 
+    DETECTION_CLICK_TOLERANCE_PIXELS = 8.0
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self._scene = QGraphicsScene(self)
 
         self._pixmap_item: QGraphicsPixmapItem | None = None
+
         self._mesh_overlay: MeshOverlay | None = None
+
         self._text_line_overlay: TextLineOverlay | None = None
+
+        self._text_line_geometry: TextLineGeometry | None = None
+
+        self._ignored_text_lines: dict[
+            TextLineGeometry,
+            set[int],
+        ] = {}
 
         self._drag_active = False
         self._browse_rect = QRectF()
@@ -59,6 +72,8 @@ class DocumentView(QGraphicsView):
         self.setAcceptDrops(True)
 
         self.setMouseTracking(True)
+
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.setRenderHint(
             QPainter.RenderHint.SmoothPixmapTransform,
@@ -125,6 +140,7 @@ class DocumentView(QGraphicsView):
         self._pixmap_item = None
         self._mesh_overlay = None
         self._text_line_overlay = None
+        self._text_line_geometry = None
 
         pixmap = QPixmap.fromImage(image)
 
@@ -172,18 +188,33 @@ class DocumentView(QGraphicsView):
     ) -> None:
         if self._text_line_overlay is not None:
             self._text_line_overlay.remove()
+
             self._text_line_overlay = None
+
+        self._text_line_geometry = geometry
 
         if geometry is None or self._pixmap_item is None:
             return
 
-        detection_color = self.palette().color(QPalette.ColorRole.Link)
+        active_color = self.palette().color(QPalette.ColorRole.Link)
+
+        # Centralizado aquí a propósito.
+        # Más adelante este color saldrá de
+        # las preferencias de apariencia.
+        ignored_color = QColor("#ff9500")
+
+        ignored_indices = self._ignored_text_lines.setdefault(
+            geometry,
+            set(),
+        )
 
         self._text_line_overlay = TextLineOverlay(
             scene=self._scene,
             document_rect=(self._pixmap_item.sceneBoundingRect()),
             geometry=geometry,
-            color=detection_color,
+            active_color=active_color,
+            ignored_color=ignored_color,
+            ignored_indices=(ignored_indices),
         )
 
     def set_text_line_geometry_visible(
@@ -195,12 +226,28 @@ class DocumentView(QGraphicsView):
 
         self._text_line_overlay.set_visible(visible)
 
-    def clear_document(self) -> None:
+    def ignored_text_line_indices(
+        self,
+    ) -> set[int]:
+        if self._text_line_geometry is None:
+            return set()
+
+        return set(
+            self._ignored_text_lines.get(
+                self._text_line_geometry,
+                set(),
+            )
+        )
+
+    def clear_document(
+        self,
+    ) -> None:
         self._scene.clear()
 
         self._pixmap_item = None
         self._mesh_overlay = None
         self._text_line_overlay = None
+        self._text_line_geometry = None
 
         self._drag_active = False
         self._browse_rect = QRectF()
@@ -211,7 +258,9 @@ class DocumentView(QGraphicsView):
 
         self.viewport().update()
 
-    def fit_document(self) -> None:
+    def fit_document(
+        self,
+    ) -> None:
         if self._pixmap_item is None:
             return
 
@@ -236,10 +285,14 @@ class DocumentView(QGraphicsView):
 
         self._emit_zoom_changed()
 
-    def zoom_in(self) -> None:
+    def zoom_in(
+        self,
+    ) -> None:
         self._apply_zoom_factor(self.ZOOM_FACTOR)
 
-    def zoom_out(self) -> None:
+    def zoom_out(
+        self,
+    ) -> None:
         self._apply_zoom_factor(1.0 / self.ZOOM_FACTOR)
 
     def _current_zoom_scale(
@@ -596,7 +649,67 @@ class DocumentView(QGraphicsView):
 
             return
 
+        if (
+            self._pixmap_item is not None
+            and self._text_line_overlay is not None
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            scene_position = self.mapToScene(event.position().toPoint())
+
+            zoom_scale = max(
+                self._current_zoom_scale(),
+                0.001,
+            )
+
+            tolerance = self.DETECTION_CLICK_TOLERANCE_PIXELS / zoom_scale
+
+            trace_index = self._text_line_overlay.trace_index_at(
+                scene_position,
+                tolerance,
+            )
+
+            if trace_index is not None:
+                self._text_line_overlay.select_trace(trace_index)
+
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+
+                event.accept()
+
+                return
+
+            self._text_line_overlay.select_trace(None)
+
         super().mousePressEvent(event)
+
+    def keyPressEvent(
+        self,
+        event: QKeyEvent,
+    ) -> None:
+        if self._text_line_overlay is not None and event.key() in (
+            Qt.Key.Key_Delete,
+            Qt.Key.Key_Backspace,
+        ):
+            selected_index = self._text_line_overlay.selected_index()
+
+            if selected_index is not None:
+                ignored = self._text_line_overlay.toggle_ignored(selected_index)
+
+                if self._text_line_geometry is not None:
+                    ignored_indices = self._ignored_text_lines.setdefault(
+                        self._text_line_geometry,
+                        set(),
+                    )
+
+                    if ignored:
+                        ignored_indices.add(selected_index)
+                    else:
+                        ignored_indices.discard(selected_index)
+
+                event.accept()
+
+                return
+
+        super().keyPressEvent(event)
 
     def dragEnterEvent(
         self,
