@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QKeySequence,
 )
 from PySide6.QtWidgets import (
+    QDockWidget,
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -30,6 +31,7 @@ from dewarplab.adapters.documents.document_loader import (
 )
 from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
+from dewarplab.ui.mesh_controls import MeshControls
 
 
 DEFAULT_MESH_ROWS = 8
@@ -69,6 +71,7 @@ class MainWindow(QMainWindow):
 
         self._create_actions()
         self._create_toolbar()
+        self._create_mesh_panel()
 
         self._set_document_actions_enabled(False)
 
@@ -107,20 +110,9 @@ class MainWindow(QMainWindow):
 
         self._fit_action.triggered.connect(self._view.fit_document)
 
-        self._mesh_action = QAction(
-            "Malla",
-            self,
-        )
-
-        self._mesh_action.setCheckable(True)
-
-        self._mesh_action.setChecked(True)
-
-        self._mesh_action.toggled.connect(self._view.set_mesh_visible)
-
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(
-            "Documento",
+            "Archivo",
             self,
         )
 
@@ -158,10 +150,6 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._zoom_in_action)
 
         toolbar.addAction(self._fit_action)
-
-        toolbar.addSeparator()
-
-        toolbar.addAction(self._mesh_action)
 
         toolbar.addSeparator()
 
@@ -233,6 +221,40 @@ class MainWindow(QMainWindow):
 
         toolbar.addWidget(self._next_page_button)
 
+    def _create_mesh_panel(self) -> None:
+        self._mesh_controls = MeshControls(self)
+
+        self._mesh_controls.setMinimumWidth(240)
+
+        self._mesh_controls.density_requested.connect(self._change_mesh_density)
+
+        self._mesh_controls.visibility_changed.connect(self._view.set_mesh_visible)
+
+        self._mesh_dock = QDockWidget(
+            "Malla",
+            self,
+        )
+
+        self._mesh_dock.setObjectName("meshDock")
+
+        self._mesh_dock.setWidget(self._mesh_controls)
+
+        self._mesh_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+
+        self._mesh_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea,
+            self._mesh_dock,
+        )
+
+        self._mesh_dock.hide()
+
     def _set_document_actions_enabled(
         self,
         enabled: bool,
@@ -243,7 +265,7 @@ class MainWindow(QMainWindow):
 
         self._fit_action.setEnabled(enabled)
 
-        self._mesh_action.setEnabled(enabled)
+        self._mesh_controls.set_controls_enabled(enabled)
 
         if not enabled:
             self._zoom_label.setText("—")
@@ -263,9 +285,9 @@ class MainWindow(QMainWindow):
 
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Abrir documento",
+            "Abrir archivo",
             "",
-            ("Documentos compatibles " f"({patterns})"),
+            ("Archivos compatibles " f"({patterns})"),
         )
 
         if path:
@@ -280,7 +302,7 @@ class MainWindow(QMainWindow):
         except DocumentLoadError as error:
             QMessageBox.critical(
                 self,
-                "No se pudo abrir el documento",
+                "No se pudo abrir el archivo",
                 str(error),
             )
 
@@ -293,16 +315,16 @@ class MainWindow(QMainWindow):
 
         self._page_meshes.clear()
 
-        self._mesh_action.setChecked(True)
-
         if previous_document is not None:
             previous_document.close()
 
         self._configure_page_selector()
 
+        self._set_document_actions_enabled(True)
+
         self._render_current_page()
 
-        self._set_document_actions_enabled(True)
+        self._mesh_dock.show()
 
         self.setWindowTitle(f"DewarpLab — " f"{document.path.name}")
 
@@ -363,8 +385,6 @@ class MainWindow(QMainWindow):
 
         self._render_current_page()
 
-        self._update_page_controls()
-
     def _go_to_next_page(
         self,
     ) -> None:
@@ -377,8 +397,6 @@ class MainWindow(QMainWindow):
         self._current_page_index += 1
 
         self._render_current_page()
-
-        self._update_page_controls()
 
     def _commit_page_number(
         self,
@@ -414,8 +432,6 @@ class MainWindow(QMainWindow):
 
         self._render_current_page()
 
-        self._update_page_controls()
-
     def _mesh_for_current_page(
         self,
     ) -> Mesh:
@@ -430,6 +446,35 @@ class MainWindow(QMainWindow):
             self._page_meshes[self._current_page_index] = mesh
 
         return mesh
+
+    def _change_mesh_density(
+        self,
+        rows: int,
+        columns: int,
+    ) -> None:
+        if self._document is None:
+            return
+
+        current_mesh = self._mesh_for_current_page()
+
+        if current_mesh.rows == rows and current_mesh.columns == columns:
+            return
+
+        new_mesh = current_mesh.resampled(
+            rows=rows,
+            columns=columns,
+        )
+
+        self._page_meshes[self._current_page_index] = new_mesh
+
+        self._view.set_mesh(new_mesh)
+
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
+        self._mesh_controls.set_mesh_shape(
+            rows=new_mesh.rows,
+            columns=new_mesh.columns,
+        )
 
     def _render_current_page(
         self,
@@ -453,12 +498,17 @@ class MainWindow(QMainWindow):
 
         mesh = self._mesh_for_current_page()
 
+        self._mesh_controls.set_mesh_shape(
+            rows=mesh.rows,
+            columns=mesh.columns,
+        )
+
         self._view.set_image(
             image=image,
             mesh=mesh,
         )
 
-        self._view.set_mesh_visible(self._mesh_action.isChecked())
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
         self._update_page_controls()
 

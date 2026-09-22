@@ -46,7 +46,6 @@ class DocumentView(QGraphicsView):
         self._scene = QGraphicsScene(self)
 
         self._pixmap_item: QGraphicsPixmapItem | None = None
-
         self._mesh_overlay: MeshOverlay | None = None
 
         self._drag_active = False
@@ -78,6 +77,7 @@ class DocumentView(QGraphicsView):
     ) -> None:
         self._scene.clear()
 
+        self._pixmap_item = None
         self._mesh_overlay = None
 
         pixmap = QPixmap.fromImage(image)
