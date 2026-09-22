@@ -28,7 +28,7 @@ PointMovedCallback = Callable[
 
 class ControlPointItem(QGraphicsObject):
     NODE_RADIUS = 5.5
-    HIT_MARGIN = 3.0
+    HIT_MARGIN = 4.0
 
     def __init__(
         self,
@@ -41,8 +41,10 @@ class ControlPointItem(QGraphicsObject):
         super().__init__(parent)
 
         self._point = point
-        self._document_rect = document_rect
+        self._document_rect = QRectF(document_rect)
+
         self._color = QColor(color)
+
         self._on_moved = on_moved
         self._syncing_position = False
 
@@ -189,7 +191,9 @@ class ControlPointItem(QGraphicsObject):
             y,
         )
 
-    def _update_model_position(self) -> None:
+    def _update_model_position(
+        self,
+    ) -> None:
         if self._document_rect.width() <= 0:
             return
 
@@ -223,8 +227,11 @@ class MeshOverlay:
         color: QColor,
     ):
         self._scene = scene
+
         self._document_rect = QRectF(document_rect)
+
         self._mesh = mesh
+
         self._color = QColor(color)
 
         self._point_items: dict[
@@ -234,18 +241,18 @@ class MeshOverlay:
 
         self._path_item = QGraphicsPathItem()
 
-        mesh_line_color = QColor(self._color)
+        line_color = QColor(self._color)
 
-        mesh_line_color.setAlpha(175)
+        line_color.setAlpha(175)
 
-        mesh_pen = QPen(
-            mesh_line_color,
+        line_pen = QPen(
+            line_color,
             1.2,
         )
 
-        mesh_pen.setCosmetic(True)
+        line_pen.setCosmetic(True)
 
-        self._path_item.setPen(mesh_pen)
+        self._path_item.setPen(line_pen)
 
         self._path_item.setZValue(10)
 
