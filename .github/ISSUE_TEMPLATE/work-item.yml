@@ -1,0 +1,46 @@
+name: Work item
+description: Plan development, research, documentation, testing, or maintenance work.
+
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should be implemented, changed, or investigated?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this work needed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is included in this issue?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What must be true for this issue to be considered complete?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Additional technical details, references, alternatives, or constraints.
+    validations:
+      required: false
