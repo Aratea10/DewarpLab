@@ -75,6 +75,48 @@ class DocumentView(QGraphicsView):
         image: QImage,
         mesh: Mesh | None = None,
     ) -> None:
+        self._replace_scene_image(
+            image=image,
+            mesh=mesh,
+        )
+
+        self.fit_document()
+
+    def replace_image(
+        self,
+        image: QImage,
+        mesh: Mesh | None = None,
+    ) -> None:
+        if self._pixmap_item is None:
+            self.set_image(
+                image=image,
+                mesh=mesh,
+            )
+
+            return
+
+        viewport_center = self.viewport().rect().center()
+
+        scene_center = self.mapToScene(viewport_center)
+
+        current_transform = self.transform()
+
+        self._replace_scene_image(
+            image=image,
+            mesh=mesh,
+        )
+
+        self.setTransform(current_transform)
+
+        self.centerOn(scene_center)
+
+        self._emit_zoom_changed()
+
+    def _replace_scene_image(
+        self,
+        image: QImage,
+        mesh: Mesh | None,
+    ) -> None:
         self._scene.clear()
 
         self._pixmap_item = None
@@ -88,8 +130,6 @@ class DocumentView(QGraphicsView):
 
         self._drag_active = False
         self._browse_rect = QRectF()
-
-        self.fit_document()
 
         if mesh is not None:
             self.set_mesh(mesh)

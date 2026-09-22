@@ -3,21 +3,23 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
     QFont,
+    QImage,
     QIntValidator,
     QKeySequence,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QFileDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QToolBar,
     QToolButton,
 )
@@ -29,6 +31,11 @@ from dewarplab.adapters.documents.document_loader import (
     is_supported_document,
     load_document,
     render_page,
+)
+from dewarplab.adapters.imaging import (
+    MeshWarpError,
+    QtImageBridgeError,
+    warp_qimage_with_mesh,
 )
 from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
@@ -45,6 +52,7 @@ class MainWindow(QMainWindow):
 
         self._document: LoadedDocument | None = None
         self._current_page_index = 0
+        self._current_original_image: QImage | None = None
 
         self._page_meshes: dict[
             int,
@@ -111,6 +119,34 @@ class MainWindow(QMainWindow):
 
         self._fit_action.triggered.connect(self._view.fit_document)
 
+        self._original_view_action = QAction(
+            "Original",
+            self,
+        )
+
+        self._original_view_action.setCheckable(True)
+
+        self._corrected_view_action = QAction(
+            "Corregida",
+            self,
+        )
+
+        self._corrected_view_action.setCheckable(True)
+
+        self._view_mode_group = QActionGroup(self)
+
+        self._view_mode_group.setExclusive(True)
+
+        self._view_mode_group.addAction(self._original_view_action)
+
+        self._view_mode_group.addAction(self._corrected_view_action)
+
+        self._original_view_action.setChecked(True)
+
+        self._original_view_action.triggered.connect(self._show_original_preview)
+
+        self._corrected_view_action.triggered.connect(self._show_corrected_preview)
+
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(
             "Archivo",
@@ -151,6 +187,18 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._zoom_in_action)
 
         toolbar.addAction(self._fit_action)
+
+        toolbar.addSeparator()
+
+        view_label = QLabel("Vista:")
+
+        view_label.setFont(base_font)
+
+        toolbar.addWidget(view_label)
+
+        toolbar.addAction(self._original_view_action)
+
+        toolbar.addAction(self._corrected_view_action)
 
         toolbar.addSeparator()
 
@@ -268,6 +316,10 @@ class MainWindow(QMainWindow):
 
         self._fit_action.setEnabled(enabled)
 
+        self._original_view_action.setEnabled(enabled)
+
+        self._corrected_view_action.setEnabled(enabled)
+
         self._mesh_controls.set_controls_enabled(enabled)
 
         if not enabled:
@@ -315,8 +367,11 @@ class MainWindow(QMainWindow):
 
         self._document = document
         self._current_page_index = 0
+        self._current_original_image = None
 
         self._page_meshes.clear()
+
+        self._original_view_action.setChecked(True)
 
         if previous_document is not None:
             previous_document.close()
@@ -411,6 +466,7 @@ class MainWindow(QMainWindow):
 
         if not text:
             self._update_page_controls()
+
             return
 
         page_number = int(text)
@@ -427,6 +483,7 @@ class MainWindow(QMainWindow):
 
         if page_index == self._current_page_index:
             self._update_page_controls()
+
             return
 
         self._current_page_index = page_index
@@ -455,6 +512,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         if self._document is None:
             return
+
+        self._ensure_original_view()
 
         current_mesh = self._mesh_for_current_page()
 
@@ -501,6 +560,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         if self._document is None:
             return
+
+        self._ensure_original_view()
 
         current_mesh = self._mesh_for_current_page()
 
@@ -549,6 +610,75 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
+    def _ensure_original_view(
+        self,
+    ) -> None:
+        if self._original_view_action.isChecked():
+            return
+
+        self._original_view_action.setChecked(True)
+
+        self._show_original_preview()
+
+    def _show_original_preview(
+        self,
+    ) -> None:
+        if self._document is None or self._current_original_image is None:
+            return
+
+        mesh = self._mesh_for_current_page()
+
+        self._view.replace_image(
+            image=self._current_original_image,
+            mesh=mesh,
+        )
+
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
+        self._mesh_controls.set_controls_enabled(True)
+
+        self.statusBar().showMessage(self._status_message(view_name="Original"))
+
+    def _show_corrected_preview(
+        self,
+    ) -> None:
+        if self._document is None or self._current_original_image is None:
+            return
+
+        mesh = self._mesh_for_current_page()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        try:
+            corrected = warp_qimage_with_mesh(
+                self._current_original_image,
+                mesh,
+            )
+        except (
+            MeshWarpError,
+            QtImageBridgeError,
+        ) as error:
+            self._original_view_action.setChecked(True)
+
+            QMessageBox.critical(
+                self,
+                "No se pudo generar la corrección",
+                str(error),
+            )
+
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._view.replace_image(
+            image=corrected,
+            mesh=None,
+        )
+
+        self._mesh_controls.set_controls_enabled(False)
+
+        self.statusBar().showMessage(self._status_message(view_name="Corregida"))
+
     def _render_current_page(
         self,
     ) -> None:
@@ -569,6 +699,8 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._current_original_image = image
+
         mesh = self._mesh_for_current_page()
 
         self._mesh_controls.set_mesh_shape(
@@ -583,7 +715,22 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
+        self._mesh_controls.set_controls_enabled(True)
+
         self._update_page_controls()
+
+        if self._corrected_view_action.isChecked():
+            self._show_corrected_preview()
+        else:
+            self.statusBar().show()
+            self.statusBar().showMessage(self._status_message(view_name="Original"))
+
+    def _status_message(
+        self,
+        view_name: str,
+    ) -> str:
+        if self._document is None or self._current_original_image is None:
+            return ""
 
         if self._document.is_pdf:
             page_text = (
@@ -595,13 +742,14 @@ class MainWindow(QMainWindow):
         else:
             page_text = "Imagen"
 
-        self.statusBar().show()
+        image = self._current_original_image
 
-        self.statusBar().showMessage(
+        return (
             f"{self._document.path.name} — "
             f"{page_text} — "
             f"{image.width()} × "
-            f"{image.height()} px"
+            f"{image.height()} px — "
+            f"Vista {view_name}"
         )
 
     def dragEnterEvent(
@@ -612,12 +760,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if path and is_supported_document(path):
             event.acceptProposedAction()
+
             return
 
         event.ignore()
@@ -630,12 +780,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
+
             return
 
         self.open_document(path)
