@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
     QGraphicsView,
 )
 
+from dewarplab.domain import Mesh
+from dewarplab.ui.mesh_overlay import MeshOverlay
+
 
 class DocumentView(QGraphicsView):
     file_dropped = Signal(str)
@@ -41,12 +44,18 @@ class DocumentView(QGraphicsView):
         super().__init__(parent)
 
         self._scene = QGraphicsScene(self)
+
         self._pixmap_item: QGraphicsPixmapItem | None = None
+
+        self._mesh_overlay: MeshOverlay | None = None
+
         self._drag_active = False
         self._browse_rect = QRectF()
 
         self.setScene(self._scene)
+
         self.setAcceptDrops(True)
+
         self.setMouseTracking(True)
 
         self.setRenderHint(
@@ -62,8 +71,14 @@ class DocumentView(QGraphicsView):
 
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-    def set_image(self, image: QImage) -> None:
+    def set_image(
+        self,
+        image: QImage,
+        mesh: Mesh | None = None,
+    ) -> None:
         self._scene.clear()
+
+        self._mesh_overlay = None
 
         pixmap = QPixmap.fromImage(image)
 
@@ -76,10 +91,43 @@ class DocumentView(QGraphicsView):
 
         self.fit_document()
 
+        if mesh is not None:
+            self.set_mesh(mesh)
+
+    def set_mesh(
+        self,
+        mesh: Mesh,
+    ) -> None:
+        if self._pixmap_item is None:
+            return
+
+        if self._mesh_overlay is not None:
+            self._mesh_overlay.remove()
+
+        mesh_color = self.palette().color(QPalette.ColorRole.Highlight)
+
+        self._mesh_overlay = MeshOverlay(
+            scene=self._scene,
+            document_rect=(self._pixmap_item.sceneBoundingRect()),
+            mesh=mesh,
+            color=mesh_color,
+        )
+
+    def set_mesh_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        if self._mesh_overlay is None:
+            return
+
+        self._mesh_overlay.set_visible(visible)
+
     def clear_document(self) -> None:
         self._scene.clear()
 
         self._pixmap_item = None
+        self._mesh_overlay = None
+
         self._drag_active = False
         self._browse_rect = QRectF()
 
@@ -120,10 +168,14 @@ class DocumentView(QGraphicsView):
     def zoom_out(self) -> None:
         self._apply_zoom_factor(1.0 / self.ZOOM_FACTOR)
 
-    def _current_zoom_scale(self) -> float:
+    def _current_zoom_scale(
+        self,
+    ) -> float:
         return self.transform().m11()
 
-    def _emit_zoom_changed(self) -> None:
+    def _emit_zoom_changed(
+        self,
+    ) -> None:
         zoom_percentage = round(self._current_zoom_scale() * 100)
 
         self.zoom_changed.emit(zoom_percentage)
@@ -166,7 +218,12 @@ class DocumentView(QGraphicsView):
             )
 
             self._emit_zoom_changed()
+
             return
+
+        previous_anchor = self.transformationAnchor()
+
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
 
         scene_position_before = self.mapToScene(anchor_position.toPoint())
 
@@ -183,6 +240,8 @@ class DocumentView(QGraphicsView):
             position_delta.x(),
             position_delta.y(),
         )
+
+        self.setTransformationAnchor(previous_anchor)
 
         self._emit_zoom_changed()
 
@@ -212,7 +271,10 @@ class DocumentView(QGraphicsView):
 
         return super().viewportEvent(event)
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(
+        self,
+        event,
+    ) -> None:
         super().paintEvent(event)
 
         if self._pixmap_item is not None:
@@ -470,6 +532,7 @@ class DocumentView(QGraphicsView):
 
         if len(urls) == 1 and urls[0].isLocalFile():
             self._drag_active = True
+
             self.viewport().update()
 
             event.acceptProposedAction()
@@ -496,6 +559,7 @@ class DocumentView(QGraphicsView):
         event: QDragLeaveEvent,
     ) -> None:
         self._drag_active = False
+
         self.viewport().update()
 
         event.accept()
@@ -507,6 +571,7 @@ class DocumentView(QGraphicsView):
         urls = event.mimeData().urls()
 
         self._drag_active = False
+
         self.viewport().update()
 
         if len(urls) != 1:

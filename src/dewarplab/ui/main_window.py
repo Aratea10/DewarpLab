@@ -28,7 +28,12 @@ from dewarplab.adapters.documents.document_loader import (
     load_document,
     render_page,
 )
+from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
+
+
+DEFAULT_MESH_ROWS = 8
+DEFAULT_MESH_COLUMNS = 8
 
 
 class MainWindow(QMainWindow):
@@ -38,8 +43,18 @@ class MainWindow(QMainWindow):
         self._document: LoadedDocument | None = None
         self._current_page_index = 0
 
+        self._page_meshes: dict[
+            int,
+            Mesh,
+        ] = {}
+
         self.setWindowTitle("DewarpLab")
-        self.resize(1300, 850)
+
+        self.resize(
+            1300,
+            850,
+        )
+
         self.setAcceptDrops(True)
 
         self._view = DocumentView(self)
@@ -92,6 +107,17 @@ class MainWindow(QMainWindow):
 
         self._fit_action.triggered.connect(self._view.fit_document)
 
+        self._mesh_action = QAction(
+            "Malla",
+            self,
+        )
+
+        self._mesh_action.setCheckable(True)
+
+        self._mesh_action.setChecked(True)
+
+        self._mesh_action.toggled.connect(self._view.set_mesh_visible)
+
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(
             "Documento",
@@ -99,6 +125,7 @@ class MainWindow(QMainWindow):
         )
 
         toolbar.setMovable(False)
+
         toolbar.setMinimumHeight(40)
 
         base_font = toolbar.font()
@@ -131,6 +158,10 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._zoom_in_action)
 
         toolbar.addAction(self._fit_action)
+
+        toolbar.addSeparator()
+
+        toolbar.addAction(self._mesh_action)
 
         toolbar.addSeparator()
 
@@ -212,6 +243,8 @@ class MainWindow(QMainWindow):
 
         self._fit_action.setEnabled(enabled)
 
+        self._mesh_action.setEnabled(enabled)
+
         if not enabled:
             self._zoom_label.setText("—")
 
@@ -221,7 +254,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._zoom_label.setText(f"{percentage}%")
 
-    def _open_document_dialog(self) -> None:
+    def _open_document_dialog(
+        self,
+    ) -> None:
         patterns = " ".join(
             f"*{extension}" for extension in sorted(SUPPORTED_EXTENSIONS)
         )
@@ -248,6 +283,7 @@ class MainWindow(QMainWindow):
                 "No se pudo abrir el documento",
                 str(error),
             )
+
             return
 
         previous_document = self._document
@@ -255,15 +291,20 @@ class MainWindow(QMainWindow):
         self._document = document
         self._current_page_index = 0
 
+        self._page_meshes.clear()
+
+        self._mesh_action.setChecked(True)
+
         if previous_document is not None:
             previous_document.close()
 
         self._configure_page_selector()
+
         self._render_current_page()
 
         self._set_document_actions_enabled(True)
 
-        self.setWindowTitle(f"DewarpLab — {document.path.name}")
+        self.setWindowTitle(f"DewarpLab — " f"{document.path.name}")
 
     def _configure_page_selector(
         self,
@@ -275,6 +316,7 @@ class MainWindow(QMainWindow):
             )
 
             self._update_page_controls()
+
             return
 
         self._page_number_validator.setRange(
@@ -320,6 +362,7 @@ class MainWindow(QMainWindow):
         self._current_page_index -= 1
 
         self._render_current_page()
+
         self._update_page_controls()
 
     def _go_to_next_page(
@@ -334,6 +377,7 @@ class MainWindow(QMainWindow):
         self._current_page_index += 1
 
         self._render_current_page()
+
         self._update_page_controls()
 
     def _commit_page_number(
@@ -346,6 +390,7 @@ class MainWindow(QMainWindow):
 
         if not text:
             self._update_page_controls()
+
             return
 
         page_number = int(text)
@@ -362,12 +407,29 @@ class MainWindow(QMainWindow):
 
         if page_index == self._current_page_index:
             self._update_page_controls()
+
             return
 
         self._current_page_index = page_index
 
         self._render_current_page()
+
         self._update_page_controls()
+
+    def _mesh_for_current_page(
+        self,
+    ) -> Mesh:
+        mesh = self._page_meshes.get(self._current_page_index)
+
+        if mesh is None:
+            mesh = Mesh.regular(
+                rows=DEFAULT_MESH_ROWS,
+                columns=DEFAULT_MESH_COLUMNS,
+            )
+
+            self._page_meshes[self._current_page_index] = mesh
+
+        return mesh
 
     def _render_current_page(
         self,
@@ -386,9 +448,17 @@ class MainWindow(QMainWindow):
                 "No se pudo mostrar la página",
                 str(error),
             )
+
             return
 
-        self._view.set_image(image)
+        mesh = self._mesh_for_current_page()
+
+        self._view.set_image(
+            image=image,
+            mesh=mesh,
+        )
+
+        self._view.set_mesh_visible(self._mesh_action.isChecked())
 
         self._update_page_controls()
 
@@ -419,12 +489,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if path and is_supported_document(path):
             event.acceptProposedAction()
+
             return
 
         event.ignore()
@@ -437,12 +509,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
+
             return
 
         self.open_document(path)
