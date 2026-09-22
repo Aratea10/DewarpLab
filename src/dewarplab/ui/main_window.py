@@ -24,6 +24,10 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+from dewarplab.adapters.detection import (
+    StructureAnalysisError,
+    analyze_document_structure,
+)
 from dewarplab.adapters.documents.document_loader import (
     DocumentLoadError,
     LoadedDocument,
@@ -35,8 +39,10 @@ from dewarplab.adapters.documents.document_loader import (
 from dewarplab.adapters.imaging import (
     MeshWarpError,
     QtImageBridgeError,
+    qimage_to_rgba_array,
     warp_qimage_with_mesh,
 )
+from dewarplab.application import StructureAnalysis
 from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
 from dewarplab.ui.mesh_controls import MeshControls
@@ -57,6 +63,16 @@ class MainWindow(QMainWindow):
         self._page_meshes: dict[
             int,
             Mesh,
+        ] = {}
+
+        self._page_density_modes: dict[
+            int,
+            str,
+        ] = {}
+
+        self._page_structure_analyses: dict[
+            int,
+            StructureAnalysis,
         ] = {}
 
         self.setWindowTitle("DewarpLab")
@@ -277,6 +293,10 @@ class MainWindow(QMainWindow):
 
         self._mesh_controls.density_requested.connect(self._change_mesh_density)
 
+        self._mesh_controls.density_mode_changed.connect(self._change_density_mode)
+
+        self._mesh_controls.analysis_requested.connect(self._analyze_current_page)
+
         self._mesh_controls.visibility_changed.connect(self._view.set_mesh_visible)
 
         self._mesh_controls.reset_requested.connect(self._reset_current_mesh)
@@ -370,6 +390,8 @@ class MainWindow(QMainWindow):
         self._current_original_image = None
 
         self._page_meshes.clear()
+        self._page_density_modes.clear()
+        self._page_structure_analyses.clear()
 
         self._original_view_action.setChecked(True)
 
@@ -396,7 +418,6 @@ class MainWindow(QMainWindow):
             )
 
             self._update_page_controls()
-
             return
 
         self._page_number_validator.setRange(
@@ -466,7 +487,6 @@ class MainWindow(QMainWindow):
 
         if not text:
             self._update_page_controls()
-
             return
 
         page_number = int(text)
@@ -483,7 +503,6 @@ class MainWindow(QMainWindow):
 
         if page_index == self._current_page_index:
             self._update_page_controls()
-
             return
 
         self._current_page_index = page_index
@@ -503,7 +522,121 @@ class MainWindow(QMainWindow):
 
             self._page_meshes[self._current_page_index] = mesh
 
+            self._page_density_modes[self._current_page_index] = (
+                MeshControls.MODE_CUSTOM
+            )
+
         return mesh
+
+    def _density_mode_for_current_page(
+        self,
+    ) -> str:
+        return self._page_density_modes.get(
+            self._current_page_index,
+            MeshControls.MODE_CUSTOM,
+        )
+
+    def _analysis_for_current_page(
+        self,
+    ) -> StructureAnalysis | None:
+        return self._page_structure_analyses.get(self._current_page_index)
+
+    def _change_density_mode(
+        self,
+        mode: str,
+    ) -> None:
+        if self._document is None:
+            return
+
+        if mode not in (
+            MeshControls.MODE_AUTOMATIC,
+            MeshControls.MODE_CUSTOM,
+        ):
+            return
+
+        self._page_density_modes[self._current_page_index] = mode
+
+        analysis = self._analysis_for_current_page()
+
+        if mode == MeshControls.MODE_AUTOMATIC and analysis is not None:
+            self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
+        else:
+            self._mesh_controls.set_analysis_summary(None)
+
+    def _analyze_current_page(
+        self,
+    ) -> None:
+        if self._document is None or self._current_original_image is None:
+            return
+
+        self._ensure_original_view()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        try:
+            rgba = qimage_to_rgba_array(self._current_original_image)
+
+            analysis = analyze_document_structure(rgba)
+
+            current_mesh = self._mesh_for_current_page()
+
+            new_mesh = current_mesh.resampled(
+                rows=analysis.suggested_rows,
+                columns=(analysis.suggested_columns),
+            )
+
+        except (
+            QtImageBridgeError,
+            StructureAnalysisError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "No se pudo analizar el documento",
+                str(error),
+            )
+
+            return
+
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._page_structure_analyses[self._current_page_index] = analysis
+
+        self._page_density_modes[self._current_page_index] = MeshControls.MODE_AUTOMATIC
+
+        self._page_meshes[self._current_page_index] = new_mesh
+
+        self._mesh_controls.set_density_mode(MeshControls.MODE_AUTOMATIC)
+
+        self._mesh_controls.set_mesh_shape(
+            rows=new_mesh.rows,
+            columns=new_mesh.columns,
+        )
+
+        self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
+
+        self._view.set_mesh(new_mesh)
+
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
+        self.statusBar().showMessage(
+            (
+                self._status_message(view_name="Original")
+                + " — "
+                + (f"Malla automática: " f"{new_mesh.rows} × " f"{new_mesh.columns}")
+            )
+        )
+
+    def _analysis_summary(
+        self,
+        analysis: StructureAnalysis,
+    ) -> str:
+        return (
+            "Malla sugerida: "
+            f"{analysis.suggested_rows} × "
+            f"{analysis.suggested_columns}"
+        )
 
     def _change_mesh_density(
         self,
@@ -525,6 +658,7 @@ class MainWindow(QMainWindow):
                 rows=rows,
                 columns=columns,
             )
+
         except ValueError:
             self._mesh_controls.set_mesh_shape(
                 rows=current_mesh.rows,
@@ -544,7 +678,18 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._page_density_modes[self._current_page_index] = MeshControls.MODE_CUSTOM
+
+        self._page_structure_analyses.pop(
+            self._current_page_index,
+            None,
+        )
+
         self._page_meshes[self._current_page_index] = new_mesh
+
+        self._mesh_controls.set_density_mode(MeshControls.MODE_CUSTOM)
+
+        self._mesh_controls.set_analysis_summary(None)
 
         self._view.set_mesh(new_mesh)
 
@@ -654,6 +799,7 @@ class MainWindow(QMainWindow):
                 self._current_original_image,
                 mesh,
             )
+
         except (
             MeshWarpError,
             QtImageBridgeError,
@@ -667,6 +813,7 @@ class MainWindow(QMainWindow):
             )
 
             return
+
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -690,6 +837,7 @@ class MainWindow(QMainWindow):
                 self._document,
                 self._current_page_index,
             )
+
         except DocumentLoadError as error:
             QMessageBox.critical(
                 self,
@@ -703,10 +851,21 @@ class MainWindow(QMainWindow):
 
         mesh = self._mesh_for_current_page()
 
+        density_mode = self._density_mode_for_current_page()
+
+        analysis = self._analysis_for_current_page()
+
         self._mesh_controls.set_mesh_shape(
             rows=mesh.rows,
             columns=mesh.columns,
         )
+
+        self._mesh_controls.set_density_mode(density_mode)
+
+        if analysis is None:
+            self._mesh_controls.set_analysis_summary(None)
+        else:
+            self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
 
         self._view.set_image(
             image=image,
@@ -723,6 +882,7 @@ class MainWindow(QMainWindow):
             self._show_corrected_preview()
         else:
             self.statusBar().show()
+
             self.statusBar().showMessage(self._status_message(view_name="Original"))
 
     def _status_message(
@@ -760,14 +920,12 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
-
             return
 
         path = urls[0].toLocalFile()
 
         if path and is_supported_document(path):
             event.acceptProposedAction()
-
             return
 
         event.ignore()
@@ -780,14 +938,12 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
-
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
-
             return
 
         self.open_document(path)
