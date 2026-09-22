@@ -304,13 +304,13 @@ class MainWindow(QMainWindow):
     def _create_mesh_panel(self) -> None:
         self._mesh_controls = MeshControls(self)
 
-        self._mesh_controls.setMinimumWidth(240)
+        self._mesh_controls.setMinimumWidth(260)
+
+        self._mesh_controls.setMaximumWidth(320)
 
         self._mesh_controls.density_requested.connect(self._change_mesh_density)
 
         self._mesh_controls.density_mode_changed.connect(self._change_density_mode)
-
-        self._mesh_controls.analysis_requested.connect(self._analyze_current_page)
 
         self._mesh_controls.visibility_changed.connect(self._view.set_mesh_visible)
 
@@ -327,6 +327,10 @@ class MainWindow(QMainWindow):
 
         self._mesh_dock.setObjectName("meshDock")
 
+        self._mesh_dock.setMinimumWidth(280)
+
+        self._mesh_dock.setMaximumWidth(340)
+
         self._mesh_dock.setWidget(self._mesh_controls)
 
         self._mesh_dock.setAllowedAreas(
@@ -341,6 +345,16 @@ class MainWindow(QMainWindow):
         self.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea,
             self._mesh_dock,
+        )
+
+        self.resizeDocks(
+            [
+                self._mesh_dock,
+            ],
+            [
+                300,
+            ],
+            Qt.Orientation.Horizontal,
         )
 
         self._mesh_dock.hide()
@@ -594,19 +608,12 @@ class MainWindow(QMainWindow):
 
         self._page_density_modes[self._current_page_index] = mode
 
-        analysis = self._analysis_for_current_page()
+        if mode == MeshControls.MODE_AUTOMATIC:
+            self._analyze_current_page()
 
-        geometry = self._text_geometry_for_current_page()
+            return
 
-        if mode == MeshControls.MODE_AUTOMATIC and analysis is not None:
-            self._mesh_controls.set_analysis_summary(
-                self._analysis_summary(
-                    analysis,
-                    geometry,
-                )
-            )
-        else:
-            self._mesh_controls.set_analysis_summary(None)
+        self._mesh_controls.set_analysis_summary(None)
 
     def _change_detection_visibility(
         self,
@@ -626,6 +633,10 @@ class MainWindow(QMainWindow):
             return
 
         self._ensure_original_view()
+
+        self._mesh_controls.set_analysis_summary("Analizando…")
+
+        QApplication.processEvents()
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
@@ -649,6 +660,8 @@ class MainWindow(QMainWindow):
             TextLineDetectionError,
             ValueError,
         ) as error:
+            self._mesh_controls.set_analysis_summary(None)
+
             QMessageBox.critical(
                 self,
                 "No se pudo analizar el documento",

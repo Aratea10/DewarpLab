@@ -29,8 +29,6 @@ class MeshControls(QWidget):
 
     density_mode_changed = Signal(str)
 
-    analysis_requested = Signal()
-
     MODE_AUTOMATIC = "automatic"
     MODE_CUSTOM = "custom"
 
@@ -82,13 +80,6 @@ class MeshControls(QWidget):
         mode_layout.addWidget(self._automatic_radio)
 
         mode_layout.addWidget(self._custom_radio)
-
-        self._analysis_button = QPushButton(
-            "Analizar documento",
-            self,
-        )
-
-        self._analysis_button.clicked.connect(self.analysis_requested)
 
         self._analysis_result_label = QLabel(
             self,
@@ -182,12 +173,11 @@ class MeshControls(QWidget):
         self._detection_checkbox.toggled.connect(self.detection_visibility_changed)
 
         description = QLabel(
-            "En modo automático, DewarpLab analiza "
-            "la estructura local de la página y propone "
-            "una densidad de malla.\n\n"
-            "Mostrar detección permite comprobar las "
-            "líneas de texto que está interpretando "
-            "el análisis automático.",
+            "Al seleccionar el modo automático, "
+            "DewarpLab analiza la estructura de la "
+            "página y calcula la densidad de la malla.\n\n"
+            "En modo personalizado puedes elegir "
+            "manualmente el número de filas y columnas.",
             self,
         )
 
@@ -212,8 +202,6 @@ class MeshControls(QWidget):
         layout.addWidget(density_label)
 
         layout.addLayout(mode_layout)
-
-        layout.addWidget(self._analysis_button)
 
         layout.addWidget(self._analysis_result_label)
 
@@ -422,8 +410,6 @@ class MeshControls(QWidget):
         self,
     ) -> None:
         automatic = self._automatic_radio.isChecked()
-
-        self._analysis_button.setEnabled(automatic)
 
         self._manual_controls.setEnabled(not automatic)
 
