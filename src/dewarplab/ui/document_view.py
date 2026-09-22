@@ -27,8 +27,10 @@ from PySide6.QtWidgets import (
     QGraphicsView,
 )
 
+from dewarplab.application import TextLineGeometry
 from dewarplab.domain import Mesh
 from dewarplab.ui.mesh_overlay import MeshOverlay
+from dewarplab.ui.text_line_overlay import TextLineOverlay
 
 
 class DocumentView(QGraphicsView):
@@ -47,6 +49,7 @@ class DocumentView(QGraphicsView):
 
         self._pixmap_item: QGraphicsPixmapItem | None = None
         self._mesh_overlay: MeshOverlay | None = None
+        self._text_line_overlay: TextLineOverlay | None = None
 
         self._drag_active = False
         self._browse_rect = QRectF()
@@ -121,6 +124,7 @@ class DocumentView(QGraphicsView):
 
         self._pixmap_item = None
         self._mesh_overlay = None
+        self._text_line_overlay = None
 
         pixmap = QPixmap.fromImage(image)
 
@@ -162,11 +166,41 @@ class DocumentView(QGraphicsView):
 
         self._mesh_overlay.set_visible(visible)
 
+    def set_text_line_geometry(
+        self,
+        geometry: TextLineGeometry | None,
+    ) -> None:
+        if self._text_line_overlay is not None:
+            self._text_line_overlay.remove()
+            self._text_line_overlay = None
+
+        if geometry is None or self._pixmap_item is None:
+            return
+
+        detection_color = self.palette().color(QPalette.ColorRole.Link)
+
+        self._text_line_overlay = TextLineOverlay(
+            scene=self._scene,
+            document_rect=(self._pixmap_item.sceneBoundingRect()),
+            geometry=geometry,
+            color=detection_color,
+        )
+
+    def set_text_line_geometry_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        if self._text_line_overlay is None:
+            return
+
+        self._text_line_overlay.set_visible(visible)
+
     def clear_document(self) -> None:
         self._scene.clear()
 
         self._pixmap_item = None
         self._mesh_overlay = None
+        self._text_line_overlay = None
 
         self._drag_active = False
         self._browse_rect = QRectF()

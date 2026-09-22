@@ -26,7 +26,9 @@ from PySide6.QtWidgets import (
 
 from dewarplab.adapters.detection import (
     StructureAnalysisError,
+    TextLineDetectionError,
     analyze_document_structure,
+    detect_text_line_geometry,
 )
 from dewarplab.adapters.documents.document_loader import (
     DocumentLoadError,
@@ -42,7 +44,10 @@ from dewarplab.adapters.imaging import (
     qimage_to_rgba_array,
     warp_qimage_with_mesh,
 )
-from dewarplab.application import StructureAnalysis
+from dewarplab.application import (
+    StructureAnalysis,
+    TextLineGeometry,
+)
 from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
 from dewarplab.ui.mesh_controls import MeshControls
@@ -73,6 +78,16 @@ class MainWindow(QMainWindow):
         self._page_structure_analyses: dict[
             int,
             StructureAnalysis,
+        ] = {}
+
+        self._page_text_line_geometries: dict[
+            int,
+            TextLineGeometry,
+        ] = {}
+
+        self._page_detection_visibility: dict[
+            int,
+            bool,
         ] = {}
 
         self.setWindowTitle("DewarpLab")
@@ -165,7 +180,7 @@ class MainWindow(QMainWindow):
 
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(
-            "Archivo",
+            "Documento",
             self,
         )
 
@@ -299,6 +314,10 @@ class MainWindow(QMainWindow):
 
         self._mesh_controls.visibility_changed.connect(self._view.set_mesh_visible)
 
+        self._mesh_controls.detection_visibility_changed.connect(
+            self._change_detection_visibility
+        )
+
         self._mesh_controls.reset_requested.connect(self._reset_current_mesh)
 
         self._mesh_dock = QDockWidget(
@@ -360,9 +379,9 @@ class MainWindow(QMainWindow):
 
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Abrir archivo",
+            "Abrir documento",
             "",
-            ("Archivos compatibles " f"({patterns})"),
+            ("Documentos compatibles " f"({patterns})"),
         )
 
         if path:
@@ -374,10 +393,11 @@ class MainWindow(QMainWindow):
     ) -> None:
         try:
             document = load_document(path)
+
         except DocumentLoadError as error:
             QMessageBox.critical(
                 self,
-                "No se pudo abrir el archivo",
+                "No se pudo abrir el documento",
                 str(error),
             )
 
@@ -392,6 +412,8 @@ class MainWindow(QMainWindow):
         self._page_meshes.clear()
         self._page_density_modes.clear()
         self._page_structure_analyses.clear()
+        self._page_text_line_geometries.clear()
+        self._page_detection_visibility.clear()
 
         self._original_view_action.setChecked(True)
 
@@ -418,6 +440,7 @@ class MainWindow(QMainWindow):
             )
 
             self._update_page_controls()
+
             return
 
         self._page_number_validator.setRange(
@@ -487,6 +510,7 @@ class MainWindow(QMainWindow):
 
         if not text:
             self._update_page_controls()
+
             return
 
         page_number = int(text)
@@ -503,6 +527,7 @@ class MainWindow(QMainWindow):
 
         if page_index == self._current_page_index:
             self._update_page_controls()
+
             return
 
         self._current_page_index = page_index
@@ -541,6 +566,19 @@ class MainWindow(QMainWindow):
     ) -> StructureAnalysis | None:
         return self._page_structure_analyses.get(self._current_page_index)
 
+    def _text_geometry_for_current_page(
+        self,
+    ) -> TextLineGeometry | None:
+        return self._page_text_line_geometries.get(self._current_page_index)
+
+    def _detection_visible_for_current_page(
+        self,
+    ) -> bool:
+        return self._page_detection_visibility.get(
+            self._current_page_index,
+            False,
+        )
+
     def _change_density_mode(
         self,
         mode: str,
@@ -558,10 +596,28 @@ class MainWindow(QMainWindow):
 
         analysis = self._analysis_for_current_page()
 
+        geometry = self._text_geometry_for_current_page()
+
         if mode == MeshControls.MODE_AUTOMATIC and analysis is not None:
-            self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
+            self._mesh_controls.set_analysis_summary(
+                self._analysis_summary(
+                    analysis,
+                    geometry,
+                )
+            )
         else:
             self._mesh_controls.set_analysis_summary(None)
+
+    def _change_detection_visibility(
+        self,
+        visible: bool,
+    ) -> None:
+        if self._document is None:
+            return
+
+        self._page_detection_visibility[self._current_page_index] = visible
+
+        self._view.set_text_line_geometry_visible(visible)
 
     def _analyze_current_page(
         self,
@@ -578,6 +634,8 @@ class MainWindow(QMainWindow):
 
             analysis = analyze_document_structure(rgba)
 
+            geometry = detect_text_line_geometry(rgba)
+
             current_mesh = self._mesh_for_current_page()
 
             new_mesh = current_mesh.resampled(
@@ -588,6 +646,7 @@ class MainWindow(QMainWindow):
         except (
             QtImageBridgeError,
             StructureAnalysisError,
+            TextLineDetectionError,
             ValueError,
         ) as error:
             QMessageBox.critical(
@@ -603,9 +662,13 @@ class MainWindow(QMainWindow):
 
         self._page_structure_analyses[self._current_page_index] = analysis
 
+        self._page_text_line_geometries[self._current_page_index] = geometry
+
         self._page_density_modes[self._current_page_index] = MeshControls.MODE_AUTOMATIC
 
         self._page_meshes[self._current_page_index] = new_mesh
+
+        self._page_detection_visibility[self._current_page_index] = True
 
         self._mesh_controls.set_density_mode(MeshControls.MODE_AUTOMATIC)
 
@@ -614,29 +677,50 @@ class MainWindow(QMainWindow):
             columns=new_mesh.columns,
         )
 
-        self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
+        self._mesh_controls.set_analysis_summary(
+            self._analysis_summary(
+                analysis,
+                geometry,
+            )
+        )
+
+        self._mesh_controls.set_detection_available(True)
+
+        self._mesh_controls.set_detection_visible(True)
 
         self._view.set_mesh(new_mesh)
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
+        self._view.set_text_line_geometry(geometry)
+
+        self._view.set_text_line_geometry_visible(True)
 
         self.statusBar().showMessage(
             (
                 self._status_message(view_name="Original")
                 + " — "
                 + (f"Malla automática: " f"{new_mesh.rows} × " f"{new_mesh.columns}")
+                + " — "
+                + (f"Trazas detectadas: " f"{geometry.trace_count}")
             )
         )
 
     def _analysis_summary(
         self,
         analysis: StructureAnalysis,
+        geometry: TextLineGeometry | None,
     ) -> str:
-        return (
+        summary = (
             "Malla sugerida: "
             f"{analysis.suggested_rows} × "
             f"{analysis.suggested_columns}"
         )
+
+        if geometry is not None:
+            summary += "\n" "Trazas detectadas: " f"{geometry.trace_count}"
+
+        return summary
 
     def _change_mesh_density(
         self,
@@ -700,6 +784,17 @@ class MainWindow(QMainWindow):
             columns=new_mesh.columns,
         )
 
+        geometry = self._text_geometry_for_current_page()
+
+        self._mesh_controls.set_detection_available(geometry is not None)
+
+        if geometry is not None:
+            self._view.set_text_line_geometry(geometry)
+
+            self._view.set_text_line_geometry_visible(
+                self._detection_visible_for_current_page()
+            )
+
     def _reset_current_mesh(
         self,
     ) -> None:
@@ -755,6 +850,15 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
+        geometry = self._text_geometry_for_current_page()
+
+        if geometry is not None:
+            self._view.set_text_line_geometry(geometry)
+
+            self._view.set_text_line_geometry_visible(
+                self._detection_visible_for_current_page()
+            )
+
     def _ensure_original_view(
         self,
     ) -> None:
@@ -773,6 +877,8 @@ class MainWindow(QMainWindow):
 
         mesh = self._mesh_for_current_page()
 
+        geometry = self._text_geometry_for_current_page()
+
         self._view.replace_image(
             image=self._current_original_image,
             mesh=mesh,
@@ -780,7 +886,20 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
+        if geometry is not None:
+            self._view.set_text_line_geometry(geometry)
+
+            self._view.set_text_line_geometry_visible(
+                self._detection_visible_for_current_page()
+            )
+
         self._mesh_controls.set_controls_enabled(True)
+
+        self._mesh_controls.set_detection_available(geometry is not None)
+
+        self._mesh_controls.set_detection_visible(
+            geometry is not None and self._detection_visible_for_current_page()
+        )
 
         self.statusBar().showMessage(self._status_message(view_name="Original"))
 
@@ -855,6 +974,10 @@ class MainWindow(QMainWindow):
 
         analysis = self._analysis_for_current_page()
 
+        geometry = self._text_geometry_for_current_page()
+
+        detection_visible = self._detection_visible_for_current_page()
+
         self._mesh_controls.set_mesh_shape(
             rows=mesh.rows,
             columns=mesh.columns,
@@ -865,7 +988,18 @@ class MainWindow(QMainWindow):
         if analysis is None:
             self._mesh_controls.set_analysis_summary(None)
         else:
-            self._mesh_controls.set_analysis_summary(self._analysis_summary(analysis))
+            self._mesh_controls.set_analysis_summary(
+                self._analysis_summary(
+                    analysis,
+                    geometry,
+                )
+            )
+
+        self._mesh_controls.set_detection_available(geometry is not None)
+
+        self._mesh_controls.set_detection_visible(
+            geometry is not None and detection_visible
+        )
 
         self._view.set_image(
             image=image,
@@ -873,6 +1007,11 @@ class MainWindow(QMainWindow):
         )
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
+        if geometry is not None:
+            self._view.set_text_line_geometry(geometry)
+
+            self._view.set_text_line_geometry_visible(detection_visible)
 
         self._mesh_controls.set_controls_enabled(True)
 
@@ -920,12 +1059,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if path and is_supported_document(path):
             event.acceptProposedAction()
+
             return
 
         event.ignore()
@@ -938,12 +1079,14 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
+
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
+
             return
 
         self.open_document(path)

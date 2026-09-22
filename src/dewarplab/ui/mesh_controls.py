@@ -23,6 +23,8 @@ class MeshControls(QWidget):
 
     visibility_changed = Signal(bool)
 
+    detection_visibility_changed = Signal(bool)
+
     reset_requested = Signal()
 
     density_mode_changed = Signal(str)
@@ -42,6 +44,7 @@ class MeshControls(QWidget):
         super().__init__(parent)
 
         self._analysis_summary: str | None = None
+        self._detection_available = False
 
         self._automatic_radio = QRadioButton(
             "Automática",
@@ -167,12 +170,24 @@ class MeshControls(QWidget):
 
         self._visibility_checkbox.toggled.connect(self.visibility_changed)
 
+        self._detection_checkbox = QCheckBox(
+            "Mostrar detección",
+            self,
+        )
+
+        self._detection_checkbox.setChecked(False)
+
+        self._detection_checkbox.setEnabled(False)
+
+        self._detection_checkbox.toggled.connect(self.detection_visibility_changed)
+
         description = QLabel(
             "En modo automático, DewarpLab analiza "
-            "la estructura de la página y propone "
+            "la estructura local de la página y propone "
             "una densidad de malla.\n\n"
-            "En modo personalizado puedes elegir "
-            "manualmente el número de filas y columnas.",
+            "Mostrar detección permite comprobar las "
+            "líneas de texto que está interpretando "
+            "el análisis automático.",
             self,
         )
 
@@ -211,6 +226,8 @@ class MeshControls(QWidget):
         layout.addWidget(self._reset_button)
 
         layout.addWidget(self._visibility_checkbox)
+
+        layout.addWidget(self._detection_checkbox)
 
         layout.addSpacing(4)
 
@@ -338,11 +355,27 @@ class MeshControls(QWidget):
 
         self._update_analysis_summary_visibility()
 
+    def set_detection_available(
+        self,
+        available: bool,
+    ) -> None:
+        self._detection_available = available
+
+        self._detection_checkbox.setEnabled(self.isEnabled() and available)
+
+    def set_detection_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        self._detection_checkbox.setChecked(visible)
+
     def set_controls_enabled(
         self,
         enabled: bool,
     ) -> None:
         self.setEnabled(enabled)
+
+        self._detection_checkbox.setEnabled(enabled and self._detection_available)
 
         if enabled:
             self._update_mode_controls()
@@ -351,6 +384,11 @@ class MeshControls(QWidget):
         self,
     ) -> bool:
         return self._visibility_checkbox.isChecked()
+
+    def is_detection_visible(
+        self,
+    ) -> bool:
+        return self._detection_checkbox.isChecked()
 
     def density_mode(
         self,
