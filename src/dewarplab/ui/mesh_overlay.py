@@ -25,6 +25,11 @@ PointMovedCallback = Callable[
     None,
 ]
 
+PointMoveValidator = Callable[
+    [int, int, float, float],
+    bool,
+]
+
 
 class ControlPointItem(QGraphicsObject):
     NODE_RADIUS = 5.5
@@ -35,17 +40,24 @@ class ControlPointItem(QGraphicsObject):
         point: ControlPoint,
         document_rect: QRectF,
         color: QColor,
+        is_boundary: bool,
+        can_move: PointMoveValidator,
         on_moved: PointMovedCallback,
         parent: QGraphicsItem | None = None,
     ):
         super().__init__(parent)
 
         self._point = point
+
         self._document_rect = QRectF(document_rect)
 
         self._color = QColor(color)
 
+        self._is_boundary = is_boundary
+
+        self._can_move = can_move
         self._on_moved = on_moved
+
         self._syncing_position = False
 
         self.setFlags(
@@ -63,7 +75,9 @@ class ControlPointItem(QGraphicsObject):
 
         self.sync_from_model()
 
-    def boundingRect(self) -> QRectF:
+    def boundingRect(
+        self,
+    ) -> QRectF:
         extent = self.NODE_RADIUS + self.HIT_MARGIN
 
         return QRectF(
@@ -89,7 +103,14 @@ class ControlPointItem(QGraphicsObject):
 
         fill_color = QColor(color)
 
-        fill_color.setAlpha(220)
+        if self._is_boundary:
+            fill_color.setAlpha(70)
+
+            pen_width = 2.0
+        else:
+            fill_color.setAlpha(220)
+
+            pen_width = 1.5
 
         painter.setRenderHint(
             QPainter.RenderHint.Antialiasing,
@@ -99,7 +120,7 @@ class ControlPointItem(QGraphicsObject):
         painter.setPen(
             QPen(
                 color,
-                1.5,
+                pen_width,
             )
         )
 
@@ -116,7 +137,9 @@ class ControlPointItem(QGraphicsObject):
             )
         )
 
-    def sync_from_model(self) -> None:
+    def sync_from_model(
+        self,
+    ) -> None:
         scene_position = QPointF(
             self._document_rect.left() + (self._point.x * self._document_rect.width()),
             self._document_rect.top() + (self._point.y * self._document_rect.height()),
@@ -135,9 +158,27 @@ class ControlPointItem(QGraphicsObject):
     ):
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
-            and isinstance(value, QPointF)
+            and isinstance(
+                value,
+                QPointF,
+            )
         ):
-            return self._clamp_position(value)
+            position = self._clamp_position(value)
+
+            if self._syncing_position:
+                return position
+
+            x, y = self._normalized_position(position)
+
+            if not self._can_move(
+                self._point.row,
+                self._point.column,
+                x,
+                y,
+            ):
+                return self.pos()
+
+            return position
 
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
@@ -191,6 +232,23 @@ class ControlPointItem(QGraphicsObject):
             y,
         )
 
+    def _normalized_position(
+        self,
+        position: QPointF,
+    ) -> tuple[float, float]:
+        normalized_x = (
+            position.x() - self._document_rect.left()
+        ) / self._document_rect.width()
+
+        normalized_y = (
+            position.y() - self._document_rect.top()
+        ) / self._document_rect.height()
+
+        return (
+            normalized_x,
+            normalized_y,
+        )
+
     def _update_model_position(
         self,
     ) -> None:
@@ -200,21 +258,13 @@ class ControlPointItem(QGraphicsObject):
         if self._document_rect.height() <= 0:
             return
 
-        position = self.pos()
-
-        normalized_x = (
-            position.x() - self._document_rect.left()
-        ) / self._document_rect.width()
-
-        normalized_y = (
-            position.y() - self._document_rect.top()
-        ) / self._document_rect.height()
+        x, y = self._normalized_position(self.pos())
 
         self._on_moved(
             self._point.row,
             self._point.column,
-            normalized_x,
-            normalized_y,
+            x,
+            y,
         )
 
 
@@ -264,7 +314,9 @@ class MeshOverlay:
         self._update_path()
 
     @property
-    def mesh(self) -> Mesh:
+    def mesh(
+        self,
+    ) -> Mesh:
         return self._mesh
 
     def set_visible(
@@ -276,7 +328,9 @@ class MeshOverlay:
         for item in self._point_items.values():
             item.setVisible(visible)
 
-    def remove(self) -> None:
+    def remove(
+        self,
+    ) -> None:
         if self._path_item.scene() is not None:
             self._scene.removeItem(self._path_item)
 
@@ -286,13 +340,24 @@ class MeshOverlay:
 
         self._point_items.clear()
 
-    def _create_point_items(self) -> None:
+    def _create_point_items(
+        self,
+    ) -> None:
         for point in self._mesh.iter_points():
+            is_boundary = (
+                point.row == 0
+                or point.row == self._mesh.rows - 1
+                or point.column == 0
+                or point.column == self._mesh.columns - 1
+            )
+
             item = ControlPointItem(
                 point=point,
-                document_rect=self._document_rect,
+                document_rect=(self._document_rect),
                 color=self._color,
-                on_moved=self._point_moved,
+                is_boundary=is_boundary,
+                can_move=(self._mesh.can_move_point),
+                on_moved=(self._point_moved),
             )
 
             self._scene.addItem(item)
@@ -320,7 +385,9 @@ class MeshOverlay:
 
         self._update_path()
 
-    def _update_path(self) -> None:
+    def _update_path(
+        self,
+    ) -> None:
         path = QPainterPath()
 
         for row in range(self._mesh.rows):

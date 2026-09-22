@@ -21,6 +21,8 @@ class MeshControls(QWidget):
 
     visibility_changed = Signal(bool)
 
+    reset_requested = Signal()
+
     MIN_DENSITY = 2
     MAX_DENSITY = 30
 
@@ -34,16 +36,16 @@ class MeshControls(QWidget):
 
         rows_control = self._create_stepper_control(
             spinbox=self._rows_spinbox,
-            decrease_tooltip="Reducir número de filas",
-            increase_tooltip="Aumentar número de filas",
+            decrease_tooltip=("Reducir número de filas"),
+            increase_tooltip=("Aumentar número de filas"),
         )
 
         self._columns_spinbox = self._create_density_spinbox(value=8)
 
         columns_control = self._create_stepper_control(
-            spinbox=self._columns_spinbox,
-            decrease_tooltip="Reducir número de columnas",
-            increase_tooltip="Aumentar número de columnas",
+            spinbox=(self._columns_spinbox),
+            decrease_tooltip=("Reducir número de columnas"),
+            increase_tooltip=("Aumentar número de columnas"),
         )
 
         form_layout = QFormLayout()
@@ -69,6 +71,13 @@ class MeshControls(QWidget):
 
         self._apply_button.clicked.connect(self._request_density_change)
 
+        self._reset_button = QPushButton(
+            "Restablecer malla",
+            self,
+        )
+
+        self._reset_button.clicked.connect(self.reset_requested)
+
         self._visibility_checkbox = QCheckBox(
             "Mostrar malla",
             self,
@@ -79,7 +88,10 @@ class MeshControls(QWidget):
         self._visibility_checkbox.toggled.connect(self.visibility_changed)
 
         description = QLabel(
-            "Al cambiar la densidad se conserva " "la forma actual de la malla.",
+            "Al cambiar la densidad se conserva "
+            "la forma actual de la malla.\n\n"
+            "Los nodos no pueden moverse de forma "
+            "que una celda se cruce o se invierta.",
             self,
         )
 
@@ -99,6 +111,8 @@ class MeshControls(QWidget):
         layout.addLayout(form_layout)
 
         layout.addWidget(self._apply_button)
+
+        layout.addWidget(self._reset_button)
 
         layout.addSpacing(4)
 
@@ -124,8 +138,6 @@ class MeshControls(QWidget):
         spinbox.setValue(value)
 
         spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-
-        spinbox.setAlignment(spinbox.alignment())
 
         spinbox.setFixedWidth(40)
 

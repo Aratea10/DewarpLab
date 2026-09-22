@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QToolBar,
     QToolButton,
 )
@@ -230,6 +231,8 @@ class MainWindow(QMainWindow):
 
         self._mesh_controls.visibility_changed.connect(self._view.set_mesh_visible)
 
+        self._mesh_controls.reset_requested.connect(self._reset_current_mesh)
+
         self._mesh_dock = QDockWidget(
             "Malla",
             self,
@@ -408,7 +411,6 @@ class MainWindow(QMainWindow):
 
         if not text:
             self._update_page_controls()
-
             return
 
         page_number = int(text)
@@ -425,7 +427,6 @@ class MainWindow(QMainWindow):
 
         if page_index == self._current_page_index:
             self._update_page_controls()
-
             return
 
         self._current_page_index = page_index
@@ -460,10 +461,29 @@ class MainWindow(QMainWindow):
         if current_mesh.rows == rows and current_mesh.columns == columns:
             return
 
-        new_mesh = current_mesh.resampled(
-            rows=rows,
-            columns=columns,
-        )
+        try:
+            new_mesh = current_mesh.resampled(
+                rows=rows,
+                columns=columns,
+            )
+        except ValueError:
+            self._mesh_controls.set_mesh_shape(
+                rows=current_mesh.rows,
+                columns=current_mesh.columns,
+            )
+
+            QMessageBox.warning(
+                self,
+                "No se puede cambiar la densidad",
+                (
+                    "La malla resultante tendría "
+                    "celdas cruzadas o invertidas.\n\n"
+                    "Prueba con una densidad mayor "
+                    "o restablece primero la malla."
+                ),
+            )
+
+            return
 
         self._page_meshes[self._current_page_index] = new_mesh
 
@@ -475,6 +495,59 @@ class MainWindow(QMainWindow):
             rows=new_mesh.rows,
             columns=new_mesh.columns,
         )
+
+    def _reset_current_mesh(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        current_mesh = self._mesh_for_current_page()
+
+        if current_mesh.is_regular():
+            return
+
+        message_box = QMessageBox(self)
+
+        message_box.setIcon(QMessageBox.Icon.Question)
+
+        message_box.setWindowTitle("Restablecer malla")
+
+        message_box.setText("¿Quieres restablecer la malla " "de esta página?")
+
+        message_box.setInformativeText(
+            "Se conservará la densidad actual, "
+            "pero se perderán los ajustes "
+            "manuales de los nodos."
+        )
+
+        reset_button = message_box.addButton(
+            "Restablecer",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+
+        cancel_button = message_box.addButton(
+            "Cancelar",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+
+        message_box.setDefaultButton(cancel_button)
+
+        message_box.exec()
+
+        if message_box.clickedButton() is not reset_button:
+            return
+
+        new_mesh = Mesh.regular(
+            rows=current_mesh.rows,
+            columns=current_mesh.columns,
+        )
+
+        self._page_meshes[self._current_page_index] = new_mesh
+
+        self._view.set_mesh(new_mesh)
+
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
     def _render_current_page(
         self,
@@ -539,14 +612,12 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
-
             return
 
         path = urls[0].toLocalFile()
 
         if path and is_supported_document(path):
             event.acceptProposedAction()
-
             return
 
         event.ignore()
@@ -559,14 +630,12 @@ class MainWindow(QMainWindow):
 
         if len(urls) != 1:
             event.ignore()
-
             return
 
         path = urls[0].toLocalFile()
 
         if not path:
             event.ignore()
-
             return
 
         self.open_document(path)
