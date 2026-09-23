@@ -12,6 +12,7 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
     QFont,
+    QFontMetrics,
     QImage,
     QIntValidator,
     QKeySequence,
@@ -59,6 +60,165 @@ from dewarplab.ui.mesh_controls import MeshControls
 
 DEFAULT_MESH_ROWS = 8
 DEFAULT_MESH_COLUMNS = 8
+
+
+class PageNavigationField(QLineEdit):
+    HORIZONTAL_PADDING = 8
+    VERTICAL_PADDING = 2
+    SEPARATOR_GAP = 6
+    FRAME_EXTRA = 2
+    MINIMUM_HEIGHT = 28
+
+    def __init__(
+        self,
+        parent=None,
+    ):
+        super().__init__(parent)
+
+        self._total_pages = 1
+
+        self._slash_label = QLabel(
+            "/",
+            self,
+        )
+
+        self._total_label = QLabel(
+            "1",
+            self,
+        )
+
+        for label in (
+            self._slash_label,
+            self._total_label,
+        ):
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            label.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                True,
+            )
+
+            label.setStyleSheet(
+                "background: transparent;" "border: none;" "padding: 0;"
+            )
+
+        self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self._update_field_layout()
+
+    def set_total_pages(
+        self,
+        total_pages: int,
+    ) -> None:
+        self._total_pages = max(
+            1,
+            total_pages,
+        )
+
+        self._slash_label.setFont(self.font())
+
+        self._total_label.setFont(self.font())
+
+        self._total_label.setText(str(self._total_pages))
+
+        self._update_field_layout()
+
+    def resizeEvent(
+        self,
+        event,
+    ) -> None:
+        super().resizeEvent(event)
+
+        self._position_labels()
+
+    def _update_field_layout(
+        self,
+    ) -> None:
+        font_metrics = QFontMetrics(self.font())
+
+        digit_count = len(str(self._total_pages))
+
+        current_page_width = font_metrics.horizontalAdvance("8" * digit_count)
+
+        slash_width = font_metrics.horizontalAdvance("/")
+
+        total_width = font_metrics.horizontalAdvance(str(self._total_pages))
+
+        text_height = font_metrics.height()
+
+        field_width = (
+            self.HORIZONTAL_PADDING
+            + current_page_width
+            + self.SEPARATOR_GAP
+            + slash_width
+            + self.SEPARATOR_GAP
+            + total_width
+            + self.HORIZONTAL_PADDING
+            + self.FRAME_EXTRA
+        )
+
+        field_height = max(
+            self.MINIMUM_HEIGHT,
+            (text_height + self.VERTICAL_PADDING * 2 + self.FRAME_EXTRA),
+        )
+
+        right_margin = (
+            self.SEPARATOR_GAP
+            + slash_width
+            + self.SEPARATOR_GAP
+            + total_width
+            + self.HORIZONTAL_PADDING
+        )
+
+        self.setTextMargins(
+            self.HORIZONTAL_PADDING,
+            self.VERTICAL_PADDING,
+            right_margin,
+            self.VERTICAL_PADDING,
+        )
+
+        self.setFixedSize(
+            field_width,
+            field_height,
+        )
+
+        self._slash_label.adjustSize()
+        self._total_label.adjustSize()
+
+        self._position_labels()
+
+    def _position_labels(
+        self,
+    ) -> None:
+        total_width = self._total_label.sizeHint().width()
+
+        total_height = self._total_label.sizeHint().height()
+
+        slash_width = self._slash_label.sizeHint().width()
+
+        slash_height = self._slash_label.sizeHint().height()
+
+        total_x = self.width() - self.HORIZONTAL_PADDING - total_width
+
+        slash_x = total_x - self.SEPARATOR_GAP - slash_width
+
+        total_y = (self.height() - total_height) // 2
+
+        slash_y = (self.height() - slash_height) // 2
+
+        self._slash_label.setGeometry(
+            slash_x,
+            slash_y,
+            slash_width,
+            slash_height,
+        )
+
+        self._total_label.setGeometry(
+            total_x,
+            total_y,
+            total_width,
+            total_height,
+        )
 
 
 class MainWindow(QMainWindow):
@@ -257,25 +417,11 @@ class MainWindow(QMainWindow):
 
         page_number_font = QFont(base_font)
 
-        if page_number_font.pointSizeF() > 0:
-            page_number_font.setPointSizeF(page_number_font.pointSizeF() + 1.5)
-
-        self._page_number_edit = QLineEdit(self)
+        self._page_number_edit = PageNavigationField(self)
 
         self._page_number_edit.setFont(page_number_font)
 
-        self._page_number_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self._page_number_edit.setFixedWidth(42)
-
-        self._page_number_edit.setMinimumHeight(28)
-
-        self._page_number_edit.setTextMargins(
-            4,
-            0,
-            4,
-            0,
-        )
+        self._page_number_edit.set_total_pages(1)
 
         self._page_number_validator = QIntValidator(
             1,
@@ -290,12 +436,6 @@ class MainWindow(QMainWindow):
         self._page_number_edit.editingFinished.connect(self._commit_page_number)
 
         toolbar.addWidget(self._page_number_edit)
-
-        self._page_total_label = QLabel("/ 1")
-
-        self._page_total_label.setFont(base_font)
-
-        toolbar.addWidget(self._page_total_label)
 
         self._next_page_button = QToolButton(self)
 
@@ -525,7 +665,7 @@ class MainWindow(QMainWindow):
 
         self._page_number_edit.setText(str(current_page))
 
-        self._page_total_label.setText(f"/ {page_count}")
+        self._page_number_edit.set_total_pages(page_count)
 
         self._page_number_edit.setEnabled(has_document and page_count > 1)
 
@@ -872,7 +1012,7 @@ class MainWindow(QMainWindow):
 
         message_box.setWindowTitle("Restablecer malla")
 
-        message_box.setText("¿Quieres restablecer la malla de esta página?")
+        message_box.setText("¿Quieres restablecer la malla " "de esta página?")
 
         message_box.setInformativeText(
             "Se conservará la densidad actual, "
