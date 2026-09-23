@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QImage, QImageReader
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import (
+    QImage,
+    QImageReader,
+    QPainter,
+)
 from PySide6.QtPdf import QPdfDocument
 
 
@@ -47,11 +51,15 @@ class LoadedDocument:
             self.pdf.close()
 
 
-def is_supported_document(path: str | Path) -> bool:
+def is_supported_document(
+    path: str | Path,
+) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_EXTENSIONS
 
 
-def load_document(path: str | Path) -> LoadedDocument:
+def load_document(
+    path: str | Path,
+) -> LoadedDocument:
     document_path = Path(path).expanduser().resolve()
 
     if not document_path.exists():
@@ -72,7 +80,7 @@ def load_document(path: str | Path) -> LoadedDocument:
     if suffix == ".pdf":
         return _load_pdf(document_path)
 
-    raise DocumentLoadError("Formato no compatible. Usa PNG, JPG, JPEG, TIFF o PDF.")
+    raise DocumentLoadError("Formato no compatible. " "Usa PNG, JPG, JPEG, TIFF o PDF.")
 
 
 def render_page(
@@ -97,7 +105,7 @@ def _calculate_preview_size(
     max_dimension: int = PREVIEW_MAX_DIMENSION,
 ) -> QSize:
     if width <= 0 or height <= 0:
-        raise DocumentLoadError("El documento tiene unas dimensiones no válidas.")
+        raise DocumentLoadError("El documento tiene unas dimensiones " "no válidas.")
 
     largest_dimension = max(
         width,
@@ -110,13 +118,22 @@ def _calculate_preview_size(
     )
 
     return QSize(
-        max(1, round(width * scale)),
-        max(1, round(height * scale)),
+        max(
+            1,
+            round(width * scale),
+        ),
+        max(
+            1,
+            round(height * scale),
+        ),
     )
 
 
-def _validate_image(path: Path) -> None:
+def _validate_image(
+    path: Path,
+) -> None:
     reader = QImageReader(str(path))
+
     reader.setAutoTransform(True)
 
     if not reader.canRead():
@@ -125,8 +142,11 @@ def _validate_image(path: Path) -> None:
         raise DocumentLoadError(message)
 
 
-def _render_image_preview(path: Path) -> QImage:
+def _render_image_preview(
+    path: Path,
+) -> QImage:
     reader = QImageReader(str(path))
+
     reader.setAutoTransform(True)
 
     original_size = reader.size()
@@ -147,22 +167,20 @@ def _render_image_preview(path: Path) -> QImage:
 
         raise DocumentLoadError(message)
 
-    # Medida de seguridad por si el formato no proporcionó
-    # correctamente sus dimensiones antes de leer la imagen.
     if image.width() > PREVIEW_MAX_DIMENSION or image.height() > PREVIEW_MAX_DIMENSION:
         preview_size = _calculate_preview_size(
             image.width(),
             image.height(),
         )
 
-        image = image.scaled(
-            preview_size,
-        )
+        image = image.scaled(preview_size)
 
     return image
 
 
-def _load_pdf(path: Path) -> LoadedDocument:
+def _load_pdf(
+    path: Path,
+) -> LoadedDocument:
     pdf = QPdfDocument()
 
     error = pdf.load(str(path))
@@ -170,7 +188,7 @@ def _load_pdf(path: Path) -> LoadedDocument:
     if error != QPdfDocument.Error.None_:
         pdf.close()
 
-        raise DocumentLoadError(f"No se pudo abrir el PDF: {error.name}")
+        raise DocumentLoadError("No se pudo abrir el PDF: " f"{error.name}")
 
     if pdf.pageCount() < 1:
         pdf.close()
@@ -183,6 +201,34 @@ def _load_pdf(path: Path) -> LoadedDocument:
     )
 
 
+def _composite_pdf_page_on_white(
+    image: QImage,
+) -> QImage:
+    background = QImage(
+        image.size(),
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
+
+    background.fill(Qt.GlobalColor.white)
+
+    color_space = image.colorSpace()
+
+    if color_space.isValid():
+        background.setColorSpace(color_space)
+
+    painter = QPainter(background)
+
+    painter.drawImage(
+        0,
+        0,
+        image,
+    )
+
+    painter.end()
+
+    return background
+
+
 def _render_pdf_page(
     document: LoadedDocument,
     page_index: int,
@@ -192,13 +238,15 @@ def _render_pdf_page(
     if pdf is None:
         raise DocumentLoadError("El documento no contiene un PDF.")
 
-    if not 0 <= page_index < pdf.pageCount():
+    if not (0 <= page_index < pdf.pageCount()):
         raise DocumentLoadError("La página solicitada no existe.")
 
     point_size = pdf.pagePointSize(page_index)
 
     if point_size.width() <= 0 or point_size.height() <= 0:
-        raise DocumentLoadError("La página del PDF tiene unas dimensiones no válidas.")
+        raise DocumentLoadError(
+            "La página del PDF tiene unas " "dimensiones no válidas."
+        )
 
     dpi_scale = PDF_PREVIEW_DPI / 72.0
 
@@ -217,6 +265,6 @@ def _render_pdf_page(
     )
 
     if image.isNull():
-        raise DocumentLoadError("No se pudo renderizar esta página del PDF.")
+        raise DocumentLoadError("No se pudo renderizar esta página " "del PDF.")
 
-    return image
+    return _composite_pdf_page_on_white(image)
