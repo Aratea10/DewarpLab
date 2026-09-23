@@ -3,12 +3,14 @@ from pathlib import Path
 from PySide6.QtCore import (
     QSettings,
     QStandardPaths,
+    QUrl,
     Qt,
 )
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
     QFont,
@@ -60,6 +62,8 @@ from dewarplab.ui.mesh_controls import MeshControls
 
 DEFAULT_MESH_ROWS = 8
 DEFAULT_MESH_COLUMNS = 8
+
+PROJECT_REPOSITORY_URL = "https://github.com/Aratea10/DewarpLab"
 
 
 class PageNavigationField(QLineEdit):
@@ -278,6 +282,7 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_toolbar()
         self._create_mesh_panel()
+        self._create_menu_bar()
 
         self._set_document_actions_enabled(False)
 
@@ -285,20 +290,64 @@ class MainWindow(QMainWindow):
 
         self.statusBar().hide()
 
-    def _create_actions(self) -> None:
+    def _create_actions(
+        self,
+    ) -> None:
         self._open_action = QAction(
             "Abrir…",
             self,
         )
 
-        self._open_action.setShortcut(QKeySequence.StandardKey.Open)
+        self._open_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_O))
 
         self._open_action.triggered.connect(self._open_document_dialog)
+
+        self._save_project_action = QAction(
+            "Guardar proyecto",
+            self,
+        )
+
+        self._save_project_action.setShortcut(
+            QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_S)
+        )
+
+        self._save_project_action.setEnabled(False)
+
+        self._export_action = QAction(
+            "Exportar…",
+            self,
+        )
+
+        self._export_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_E))
+
+        self._export_action.setEnabled(False)
+
+        self._undo_action = QAction(
+            "Deshacer",
+            self,
+        )
+
+        self._undo_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Z))
+
+        self._undo_action.setEnabled(False)
+
+        self._redo_action = QAction(
+            "Rehacer",
+            self,
+        )
+
+        self._redo_action.setShortcut(
+            QKeySequence(Qt.Modifier.CTRL | Qt.Modifier.SHIFT | Qt.Key.Key_Z)
+        )
+
+        self._redo_action.setEnabled(False)
 
         self._zoom_out_action = QAction(
             "Reducir",
             self,
         )
+
+        self._zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
 
         self._zoom_out_action.triggered.connect(self._view.zoom_out)
 
@@ -307,10 +356,12 @@ class MainWindow(QMainWindow):
             self,
         )
 
+        self._zoom_in_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
+
         self._zoom_in_action.triggered.connect(self._view.zoom_in)
 
         self._fit_action = QAction(
-            "Ajustar",
+            "Ajustar a ventana",
             self,
         )
 
@@ -322,6 +373,15 @@ class MainWindow(QMainWindow):
         )
 
         self._original_view_action.setCheckable(True)
+
+        self._comparison_view_action = QAction(
+            "Comparación",
+            self,
+        )
+
+        self._comparison_view_action.setCheckable(True)
+
+        self._comparison_view_action.setEnabled(False)
 
         self._corrected_view_action = QAction(
             "Corregida",
@@ -336,6 +396,8 @@ class MainWindow(QMainWindow):
 
         self._view_mode_group.addAction(self._original_view_action)
 
+        self._view_mode_group.addAction(self._comparison_view_action)
+
         self._view_mode_group.addAction(self._corrected_view_action)
 
         self._original_view_action.setChecked(True)
@@ -344,7 +406,95 @@ class MainWindow(QMainWindow):
 
         self._corrected_view_action.triggered.connect(self._show_corrected_preview)
 
-    def _create_toolbar(self) -> None:
+        self._detect_page_boundaries_action = QAction(
+            "Detectar límites del papel",
+            self,
+        )
+
+        self._detect_page_boundaries_action.setEnabled(False)
+
+        self._analyze_structure_action = QAction(
+            "Analizar estructura del documento",
+            self,
+        )
+
+        self._analyze_structure_action.setEnabled(False)
+
+        self._automatic_mesh_action = QAction(
+            "Generar malla automática",
+            self,
+        )
+
+        self._automatic_mesh_action.triggered.connect(self._generate_automatic_mesh)
+
+        self._manual_crop_action = QAction(
+            "Recorte manual",
+            self,
+        )
+
+        self._manual_crop_action.setEnabled(False)
+
+        self._rotate_left_action = QAction(
+            "90° a la izquierda",
+            self,
+        )
+
+        self._rotate_left_action.setEnabled(False)
+
+        self._rotate_right_action = QAction(
+            "90° a la derecha",
+            self,
+        )
+
+        self._rotate_right_action.setEnabled(False)
+
+        self._contrast_action = QAction(
+            "Mejora de contraste / texto",
+            self,
+        )
+
+        self._contrast_action.setEnabled(False)
+
+        self._flatten_document_action = QAction(
+            "Aplanar documento",
+            self,
+        )
+
+        self._flatten_document_action.triggered.connect(self._flatten_document)
+
+        self._tutorial_action = QAction(
+            "Tutorial",
+            self,
+        )
+
+        self._tutorial_action.setEnabled(False)
+
+        self._keyboard_shortcuts_action = QAction(
+            "Atajos de teclado",
+            self,
+        )
+
+        self._keyboard_shortcuts_action.setEnabled(False)
+
+        self._repository_action = QAction(
+            "Ir al repositorio en GitHub",
+            self,
+        )
+
+        self._repository_action.triggered.connect(self._open_repository)
+
+        self._about_action = QAction(
+            "Acerca de DewarpLab",
+            self,
+        )
+
+        self._about_action.setMenuRole(QAction.MenuRole.AboutRole)
+
+        self._about_action.setEnabled(False)
+
+    def _create_toolbar(
+        self,
+    ) -> None:
         toolbar = QToolBar(
             "Documento",
             self,
@@ -447,7 +597,9 @@ class MainWindow(QMainWindow):
 
         toolbar.addWidget(self._next_page_button)
 
-    def _create_mesh_panel(self) -> None:
+    def _create_mesh_panel(
+        self,
+    ) -> None:
         self._mesh_controls = MeshControls(self)
 
         self._mesh_controls.setMinimumWidth(260)
@@ -505,6 +657,97 @@ class MainWindow(QMainWindow):
 
         self._mesh_dock.hide()
 
+    def _create_menu_bar(
+        self,
+    ) -> None:
+        menu_bar = self.menuBar()
+
+        menu_bar.setNativeMenuBar(True)
+
+        file_menu = menu_bar.addMenu("Archivo")
+
+        file_menu.addAction(self._open_action)
+
+        file_menu.addAction(self._save_project_action)
+
+        file_menu.addSeparator()
+
+        file_menu.addAction(self._export_action)
+
+        edit_menu = menu_bar.addMenu("Edición")
+
+        edit_menu.addAction(self._undo_action)
+
+        edit_menu.addAction(self._redo_action)
+
+        view_menu = menu_bar.addMenu("Ver")
+
+        view_menu.addAction(self._original_view_action)
+
+        view_menu.addAction(self._comparison_view_action)
+
+        view_menu.addAction(self._corrected_view_action)
+
+        view_menu.addSeparator()
+
+        zoom_menu = view_menu.addMenu("Zoom")
+
+        zoom_menu.addAction(self._zoom_in_action)
+
+        zoom_menu.addAction(self._zoom_out_action)
+
+        zoom_menu.addSeparator()
+
+        zoom_menu.addAction(self._fit_action)
+
+        view_menu.addSeparator()
+
+        self._mesh_panel_action = self._mesh_dock.toggleViewAction()
+
+        self._mesh_panel_action.setText("Panel de malla")
+
+        view_menu.addAction(self._mesh_panel_action)
+
+        detection_menu = menu_bar.addMenu("Detección")
+
+        detection_menu.addAction(self._detect_page_boundaries_action)
+
+        detection_menu.addAction(self._analyze_structure_action)
+
+        detection_menu.addSeparator()
+
+        detection_menu.addAction(self._automatic_mesh_action)
+
+        tools_menu = menu_bar.addMenu("Herramientas")
+
+        tools_menu.addAction(self._manual_crop_action)
+
+        rotate_menu = tools_menu.addMenu("Rotar")
+
+        rotate_menu.addAction(self._rotate_left_action)
+
+        rotate_menu.addAction(self._rotate_right_action)
+
+        tools_menu.addAction(self._contrast_action)
+
+        tools_menu.addSeparator()
+
+        tools_menu.addAction(self._flatten_document_action)
+
+        help_menu = menu_bar.addMenu("Ayuda")
+
+        help_menu.addAction(self._tutorial_action)
+
+        help_menu.addAction(self._keyboard_shortcuts_action)
+
+        help_menu.addSeparator()
+
+        help_menu.addAction(self._repository_action)
+
+        help_menu.addSeparator()
+
+        help_menu.addAction(self._about_action)
+
     def _set_document_actions_enabled(
         self,
         enabled: bool,
@@ -518,6 +761,12 @@ class MainWindow(QMainWindow):
         self._original_view_action.setEnabled(enabled)
 
         self._corrected_view_action.setEnabled(enabled)
+
+        self._automatic_mesh_action.setEnabled(enabled)
+
+        self._flatten_document_action.setEnabled(enabled)
+
+        self._mesh_panel_action.setEnabled(enabled)
 
         self._mesh_controls.set_controls_enabled(enabled)
 
@@ -584,6 +833,31 @@ class MainWindow(QMainWindow):
         if path:
             self.open_document(path)
 
+    def _open_repository(
+        self,
+    ) -> None:
+        QDesktopServices.openUrl(QUrl(PROJECT_REPOSITORY_URL))
+
+    def _generate_automatic_mesh(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        self._mesh_controls.set_density_mode(MeshControls.MODE_AUTOMATIC)
+
+        self._change_density_mode(MeshControls.MODE_AUTOMATIC)
+
+    def _flatten_document(
+        self,
+    ) -> None:
+        if self._document is None:
+            return
+
+        self._corrected_view_action.setChecked(True)
+
+        self._show_corrected_preview()
+
     def open_document(
         self,
         path: str | Path,
@@ -627,7 +901,7 @@ class MainWindow(QMainWindow):
 
         self._mesh_dock.show()
 
-        self.setWindowTitle(f"DewarpLab — " f"{document.path.name}")
+        self.setWindowTitle(f"DewarpLab — {document.path.name}")
 
     def _configure_page_selector(
         self,
