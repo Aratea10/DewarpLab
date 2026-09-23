@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import (
+    QSettings,
+    QStandardPaths,
+    Qt,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -58,6 +62,8 @@ DEFAULT_MESH_COLUMNS = 8
 
 
 class MainWindow(QMainWindow):
+    SETTINGS_LAST_DOCUMENT_DIRECTORY = "documents/last_directory"
+
     def __init__(self):
         super().__init__()
 
@@ -384,6 +390,43 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._zoom_label.setText(f"{percentage}%")
 
+    def _initial_document_directory(
+        self,
+    ) -> str:
+        settings = QSettings()
+
+        saved_directory = settings.value(
+            self.SETTINGS_LAST_DOCUMENT_DIRECTORY,
+            "",
+            type=str,
+        )
+
+        if saved_directory:
+            directory = Path(saved_directory)
+
+            if directory.is_dir():
+                return str(directory)
+
+        documents_locations = QStandardPaths.standardLocations(
+            QStandardPaths.StandardLocation.DocumentsLocation
+        )
+
+        if documents_locations:
+            return documents_locations[0]
+
+        return str(Path.home())
+
+    def _remember_document_directory(
+        self,
+        document_path: Path,
+    ) -> None:
+        settings = QSettings()
+
+        settings.setValue(
+            self.SETTINGS_LAST_DOCUMENT_DIRECTORY,
+            str(document_path.parent),
+        )
+
     def _open_document_dialog(
         self,
     ) -> None:
@@ -394,7 +437,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Abrir documento",
-            "",
+            self._initial_document_directory(),
             ("Documentos compatibles " f"({patterns})"),
         )
 
@@ -416,6 +459,8 @@ class MainWindow(QMainWindow):
             )
 
             return
+
+        self._remember_document_directory(document.path)
 
         previous_document = self._document
 
@@ -651,7 +696,7 @@ class MainWindow(QMainWindow):
 
             new_mesh = current_mesh.resampled(
                 rows=analysis.suggested_rows,
-                columns=(analysis.suggested_columns),
+                columns=analysis.suggested_columns,
             )
 
         except (
@@ -827,7 +872,7 @@ class MainWindow(QMainWindow):
 
         message_box.setWindowTitle("Restablecer malla")
 
-        message_box.setText("¿Quieres restablecer la malla " "de esta página?")
+        message_box.setText("¿Quieres restablecer la malla de esta página?")
 
         message_box.setInformativeText(
             "Se conservará la densidad actual, "
