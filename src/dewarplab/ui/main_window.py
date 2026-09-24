@@ -300,6 +300,10 @@ class MainWindow(QMainWindow):
 
         self._open_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_O))
 
+        self._open_action.setIconText("Abrir")
+
+        self._open_action.setToolTip("Abrir documento")
+
         self._open_action.triggered.connect(self._open_document_dialog)
 
         self._save_project_action = QAction(
@@ -310,6 +314,10 @@ class MainWindow(QMainWindow):
         self._save_project_action.setShortcut(
             QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_S)
         )
+
+        self._save_project_action.setIconText("Guardar")
+
+        self._save_project_action.setToolTip("Guardar proyecto")
 
         self._save_project_action.setEnabled(False)
 
@@ -364,6 +372,10 @@ class MainWindow(QMainWindow):
             "Ajustar a ventana",
             self,
         )
+
+        self._fit_action.setIconText("Ajustar")
+
+        self._fit_action.setToolTip("Ajustar a ventana")
 
         self._fit_action.triggered.connect(self._view.fit_document)
 
@@ -515,10 +527,14 @@ class MainWindow(QMainWindow):
 
         self.addToolBar(toolbar)
 
+        # Documento
         toolbar.addAction(self._open_action)
+
+        toolbar.addAction(self._save_project_action)
 
         toolbar.addSeparator()
 
+        # Zoom
         toolbar.addAction(self._zoom_out_action)
 
         self._zoom_label = QLabel("—")
@@ -537,24 +553,14 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        view_label = QLabel("Vista:")
-
-        view_label.setFont(base_font)
-
-        toolbar.addWidget(view_label)
-
+        # Vista
         toolbar.addAction(self._original_view_action)
 
         toolbar.addAction(self._corrected_view_action)
 
         toolbar.addSeparator()
 
-        self._page_label = QLabel("Página:")
-
-        self._page_label.setFont(base_font)
-
-        toolbar.addWidget(self._page_label)
-
+        # Navegación de páginas
         self._previous_page_button = QToolButton(self)
 
         self._previous_page_button.setText("‹")
