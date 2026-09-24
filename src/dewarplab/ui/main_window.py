@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QImage,
     QIntValidator,
     QKeySequence,
+    QUndoStack,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -58,6 +59,7 @@ from dewarplab.application import (
 from dewarplab.domain import Mesh
 from dewarplab.ui.document_view import DocumentView
 from dewarplab.ui.mesh_controls import MeshControls
+from dewarplab.ui.undo_commands import MoveMeshPointCommand
 
 
 DEFAULT_MESH_ROWS = 8
@@ -228,11 +230,15 @@ class PageNavigationField(QLineEdit):
 class MainWindow(QMainWindow):
     SETTINGS_LAST_DOCUMENT_DIRECTORY = "documents/last_directory"
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         super().__init__()
 
         self._document: LoadedDocument | None = None
+
         self._current_page_index = 0
+
         self._current_original_image: QImage | None = None
 
         self._page_meshes: dict[
@@ -260,6 +266,8 @@ class MainWindow(QMainWindow):
             bool,
         ] = {}
 
+        self._undo_stack = QUndoStack(self)
+
         self.setWindowTitle("DewarpLab")
 
         self.resize(
@@ -276,6 +284,8 @@ class MainWindow(QMainWindow):
         self._view.browse_requested.connect(self._open_document_dialog)
 
         self._view.zoom_changed.connect(self._update_zoom_label)
+
+        self._view.mesh_point_move_committed.connect(self._commit_mesh_point_move)
 
         self.setCentralWidget(self._view)
 
@@ -330,25 +340,27 @@ class MainWindow(QMainWindow):
 
         self._export_action.setEnabled(False)
 
-        self._undo_action = QAction(
+        self._undo_action = self._undo_stack.createUndoAction(
+            self,
             "Deshacer",
-            self,
         )
 
-        self._undo_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Z))
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
 
-        self._undo_action.setEnabled(False)
+        self._undo_action.setIconText("Deshacer")
 
-        self._redo_action = QAction(
+        self._undo_action.setToolTip("Deshacer último cambio")
+
+        self._redo_action = self._undo_stack.createRedoAction(
+            self,
             "Rehacer",
-            self,
         )
 
-        self._redo_action.setShortcut(
-            QKeySequence(Qt.Modifier.CTRL | Qt.Modifier.SHIFT | Qt.Key.Key_Z)
-        )
+        self._redo_action.setShortcut(QKeySequence.StandardKey.Redo)
 
-        self._redo_action.setEnabled(False)
+        self._redo_action.setIconText("Rehacer")
+
+        self._redo_action.setToolTip("Rehacer último cambio")
 
         self._zoom_out_action = QAction(
             "Reducir",
@@ -527,14 +539,18 @@ class MainWindow(QMainWindow):
 
         self.addToolBar(toolbar)
 
-        # Documento
         toolbar.addAction(self._open_action)
 
         toolbar.addAction(self._save_project_action)
 
         toolbar.addSeparator()
 
-        # Zoom
+        toolbar.addAction(self._undo_action)
+
+        toolbar.addAction(self._redo_action)
+
+        toolbar.addSeparator()
+
         toolbar.addAction(self._zoom_out_action)
 
         self._zoom_label = QLabel("—")
@@ -553,14 +569,12 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        # Vista
         toolbar.addAction(self._original_view_action)
 
         toolbar.addAction(self._corrected_view_action)
 
         toolbar.addSeparator()
 
-        # Navegación de páginas
         self._previous_page_button = QToolButton(self)
 
         self._previous_page_button.setText("‹")
@@ -894,6 +908,8 @@ class MainWindow(QMainWindow):
         self._page_text_line_geometries.clear()
         self._page_detection_visibility.clear()
 
+        self._undo_stack.clear()
+
         self._original_view_action.setChecked(True)
 
         if previous_document is not None:
@@ -907,7 +923,7 @@ class MainWindow(QMainWindow):
 
         self._mesh_dock.show()
 
-        self.setWindowTitle(f"DewarpLab — {document.path.name}")
+        self.setWindowTitle(f"DewarpLab — " f"{document.path.name}")
 
     def _configure_page_selector(
         self,
@@ -1058,6 +1074,59 @@ class MainWindow(QMainWindow):
             False,
         )
 
+    def _commit_mesh_point_move(
+        self,
+        row: int,
+        column: int,
+        previous_x: float,
+        previous_y: float,
+        new_x: float,
+        new_y: float,
+    ) -> None:
+        if self._document is None:
+            return
+
+        page_index = self._current_page_index
+
+        mesh = self._page_meshes.get(page_index)
+
+        if mesh is None:
+            return
+
+        command = MoveMeshPointCommand(
+            mesh=mesh,
+            row=row,
+            column=column,
+            previous_x=previous_x,
+            previous_y=previous_y,
+            new_x=new_x,
+            new_y=new_y,
+            on_applied=lambda: (self._refresh_mesh_after_history_change(page_index)),
+        )
+
+        self._undo_stack.push(command)
+
+    def _refresh_mesh_after_history_change(
+        self,
+        page_index: int,
+    ) -> None:
+        if self._document is None or self._current_page_index != page_index:
+            return
+
+        if self._corrected_view_action.isChecked():
+            self._show_corrected_preview()
+
+            return
+
+        mesh = self._page_meshes.get(page_index)
+
+        if mesh is None:
+            return
+
+        self._view.set_mesh(mesh)
+
+        self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
+
     def _change_density_mode(
         self,
         mode: str,
@@ -1137,6 +1206,8 @@ class MainWindow(QMainWindow):
 
         finally:
             QApplication.restoreOverrideCursor()
+
+        self._undo_stack.clear()
 
         self._page_structure_analyses[self._current_page_index] = analysis
 
@@ -1240,6 +1311,8 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._undo_stack.clear()
+
         self._page_density_modes[self._current_page_index] = MeshControls.MODE_CUSTOM
 
         self._page_structure_analyses.pop(
@@ -1321,6 +1394,8 @@ class MainWindow(QMainWindow):
             rows=current_mesh.rows,
             columns=current_mesh.columns,
         )
+
+        self._undo_stack.clear()
 
         self._page_meshes[self._current_page_index] = new_mesh
 

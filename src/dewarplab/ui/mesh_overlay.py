@@ -30,10 +30,23 @@ PointMoveValidator = Callable[
     bool,
 ]
 
+PointMoveCommittedCallback = Callable[
+    [
+        int,
+        int,
+        float,
+        float,
+        float,
+        float,
+    ],
+    None,
+]
+
 
 class ControlPointItem(QGraphicsObject):
     NODE_RADIUS = 5.5
     HIT_MARGIN = 4.0
+    MOVE_EPSILON = 1e-12
 
     def __init__(
         self,
@@ -43,6 +56,7 @@ class ControlPointItem(QGraphicsObject):
         is_boundary: bool,
         can_move: PointMoveValidator,
         on_moved: PointMovedCallback,
+        on_move_committed: PointMoveCommittedCallback,
         parent: QGraphicsItem | None = None,
     ):
         super().__init__(parent)
@@ -58,7 +72,11 @@ class ControlPointItem(QGraphicsObject):
         self._can_move = can_move
         self._on_moved = on_moved
 
+        self._on_move_committed = on_move_committed
+
         self._syncing_position = False
+
+        self._drag_start: tuple[float, float] | None = None
 
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -195,6 +213,11 @@ class ControlPointItem(QGraphicsObject):
         self,
         event: QGraphicsSceneMouseEvent,
     ) -> None:
+        self._drag_start = (
+            self._point.x,
+            self._point.y,
+        )
+
         self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
         super().mousePressEvent(event)
@@ -206,6 +229,36 @@ class ControlPointItem(QGraphicsObject):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         super().mouseReleaseEvent(event)
+
+        drag_start = self._drag_start
+
+        self._drag_start = None
+
+        if drag_start is None:
+            return
+
+        (
+            previous_x,
+            previous_y,
+        ) = drag_start
+
+        new_x = self._point.x
+        new_y = self._point.y
+
+        if (
+            abs(new_x - previous_x) <= self.MOVE_EPSILON
+            and abs(new_y - previous_y) <= self.MOVE_EPSILON
+        ):
+            return
+
+        self._on_move_committed(
+            self._point.row,
+            self._point.column,
+            previous_x,
+            previous_y,
+            new_x,
+            new_y,
+        )
 
     def _clamp_position(
         self,
@@ -275,6 +328,7 @@ class MeshOverlay:
         document_rect: QRectF,
         mesh: Mesh,
         color: QColor,
+        on_point_move_committed: PointMoveCommittedCallback,
     ):
         self._scene = scene
 
@@ -283,6 +337,8 @@ class MeshOverlay:
         self._mesh = mesh
 
         self._color = QColor(color)
+
+        self._on_point_move_committed = on_point_move_committed
 
         self._point_items: dict[
             tuple[int, int],
@@ -358,6 +414,7 @@ class MeshOverlay:
                 is_boundary=is_boundary,
                 can_move=(self._mesh.can_move_point),
                 on_moved=(self._point_moved),
+                on_move_committed=(self._on_point_move_committed),
             )
 
             self._scene.addItem(item)
@@ -391,7 +448,12 @@ class MeshOverlay:
         path = QPainterPath()
 
         for row in range(self._mesh.rows):
-            first_item = self._point_items[(row, 0)]
+            first_item = self._point_items[
+                (
+                    row,
+                    0,
+                )
+            ]
 
             path.moveTo(first_item.pos())
 
@@ -399,10 +461,22 @@ class MeshOverlay:
                 1,
                 self._mesh.columns,
             ):
-                path.lineTo(self._point_items[(row, column)].pos())
+                path.lineTo(
+                    self._point_items[
+                        (
+                            row,
+                            column,
+                        )
+                    ].pos()
+                )
 
         for column in range(self._mesh.columns):
-            first_item = self._point_items[(0, column)]
+            first_item = self._point_items[
+                (
+                    0,
+                    column,
+                )
+            ]
 
             path.moveTo(first_item.pos())
 
@@ -410,6 +484,13 @@ class MeshOverlay:
                 1,
                 self._mesh.rows,
             ):
-                path.lineTo(self._point_items[(row, column)].pos())
+                path.lineTo(
+                    self._point_items[
+                        (
+                            row,
+                            column,
+                        )
+                    ].pos()
+                )
 
         self._path_item.setPath(path)

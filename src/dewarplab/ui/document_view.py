@@ -40,13 +40,25 @@ class DocumentView(QGraphicsView):
     browse_requested = Signal()
     zoom_changed = Signal(int)
 
+    mesh_point_move_committed = Signal(
+        int,
+        int,
+        float,
+        float,
+        float,
+        float,
+    )
+
     ZOOM_FACTOR = 1.2
     MIN_ZOOM_SCALE = 0.02
     MAX_ZOOM_SCALE = 8.0
 
     DETECTION_CLICK_TOLERANCE_PIXELS = 8.0
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+    ):
         super().__init__(parent)
 
         self._scene = QGraphicsScene(self)
@@ -65,6 +77,7 @@ class DocumentView(QGraphicsView):
         ] = {}
 
         self._drag_active = False
+
         self._browse_rect = QRectF()
 
         self.setScene(self._scene)
@@ -149,6 +162,7 @@ class DocumentView(QGraphicsView):
         self._scene.setSceneRect(self._pixmap_item.boundingRect())
 
         self._drag_active = False
+
         self._browse_rect = QRectF()
 
         if mesh is not None:
@@ -171,6 +185,25 @@ class DocumentView(QGraphicsView):
             document_rect=(self._pixmap_item.sceneBoundingRect()),
             mesh=mesh,
             color=mesh_color,
+            on_point_move_committed=(self._emit_mesh_point_move_committed),
+        )
+
+    def _emit_mesh_point_move_committed(
+        self,
+        row: int,
+        column: int,
+        previous_x: float,
+        previous_y: float,
+        new_x: float,
+        new_y: float,
+    ) -> None:
+        self.mesh_point_move_committed.emit(
+            row,
+            column,
+            previous_x,
+            previous_y,
+            new_x,
+            new_y,
         )
 
     def set_mesh_visible(
@@ -198,9 +231,6 @@ class DocumentView(QGraphicsView):
 
         active_color = self.palette().color(QPalette.ColorRole.Link)
 
-        # Centralizado aquí a propósito.
-        # Más adelante este color saldrá de
-        # las preferencias de apariencia.
         ignored_color = QColor("#ff9500")
 
         ignored_indices = self._ignored_text_lines.setdefault(
@@ -250,6 +280,7 @@ class DocumentView(QGraphicsView):
         self._text_line_geometry = None
 
         self._drag_active = False
+
         self._browse_rect = QRectF()
 
         self.resetTransform()
