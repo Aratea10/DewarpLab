@@ -29,9 +29,19 @@ from PySide6.QtWidgets import (
     QGraphicsView,
 )
 
-from dewarplab.application import TextLineGeometry
+from dewarplab.application import (
+    PageBoundaryGeometry,
+    PrintedStructureGeometry,
+    TextLineGeometry,
+)
 from dewarplab.domain import Mesh
 from dewarplab.ui.mesh_overlay import MeshOverlay
+from dewarplab.ui.page_boundary_overlay import (
+    PageBoundaryOverlay,
+)
+from dewarplab.ui.printed_structure_overlay import (
+    PrintedStructureOverlay,
+)
 from dewarplab.ui.text_line_overlay import TextLineOverlay
 
 
@@ -67,7 +77,15 @@ class DocumentView(QGraphicsView):
 
         self._mesh_overlay: MeshOverlay | None = None
 
+        self._page_boundary_overlay: PageBoundaryOverlay | None = None
+
+        self._printed_structure_overlay: PrintedStructureOverlay | None = None
+
         self._text_line_overlay: TextLineOverlay | None = None
+
+        self._page_boundary_geometry: PageBoundaryGeometry | None = None
+
+        self._printed_structure_geometry: PrintedStructureGeometry | None = None
 
         self._text_line_geometry: TextLineGeometry | None = None
 
@@ -152,7 +170,13 @@ class DocumentView(QGraphicsView):
 
         self._pixmap_item = None
         self._mesh_overlay = None
+
+        self._page_boundary_overlay = None
+        self._printed_structure_overlay = None
         self._text_line_overlay = None
+
+        self._page_boundary_geometry = None
+        self._printed_structure_geometry = None
         self._text_line_geometry = None
 
         pixmap = QPixmap.fromImage(image)
@@ -215,6 +239,73 @@ class DocumentView(QGraphicsView):
 
         self._mesh_overlay.set_visible(visible)
 
+    def set_page_boundary_geometry(
+        self,
+        geometry: PageBoundaryGeometry | None,
+    ) -> None:
+        if self._page_boundary_overlay is not None:
+            self._page_boundary_overlay.remove()
+
+            self._page_boundary_overlay = None
+
+        self._page_boundary_geometry = geometry
+
+        if geometry is None or self._pixmap_item is None:
+            return
+
+        boundary_color = QColor("#ffd60a")
+
+        self._page_boundary_overlay = PageBoundaryOverlay(
+            scene=self._scene,
+            document_rect=(self._pixmap_item.sceneBoundingRect()),
+            geometry=geometry,
+            color=boundary_color,
+        )
+
+    def set_page_boundary_geometry_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        if self._page_boundary_overlay is None:
+            return
+
+        self._page_boundary_overlay.set_visible(visible)
+
+    def set_printed_structure_geometry(
+        self,
+        geometry: PrintedStructureGeometry | None,
+    ) -> None:
+        if self._printed_structure_overlay is not None:
+            self._printed_structure_overlay.remove()
+
+            self._printed_structure_overlay = None
+
+        self._printed_structure_geometry = geometry
+
+        if geometry is None or self._pixmap_item is None:
+            return
+
+        horizontal_color = QColor("#30d158")
+
+        vertical_color = QColor("#bf5af2")
+
+        self._printed_structure_overlay = PrintedStructureOverlay(
+            scene=self._scene,
+            document_rect=(self._pixmap_item.sceneBoundingRect()),
+            geometry=geometry,
+            horizontal_color=(horizontal_color),
+            vertical_color=(vertical_color),
+        )
+
+    def set_printed_structure_geometry_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        if self._printed_structure_overlay is None:
+            return
+
+        self._printed_structure_overlay.set_visible(visible)
+
     def set_text_line_geometry(
         self,
         geometry: TextLineGeometry | None,
@@ -276,7 +367,13 @@ class DocumentView(QGraphicsView):
 
         self._pixmap_item = None
         self._mesh_overlay = None
+
+        self._page_boundary_overlay = None
+        self._printed_structure_overlay = None
         self._text_line_overlay = None
+
+        self._page_boundary_geometry = None
+        self._printed_structure_geometry = None
         self._text_line_geometry = None
 
         self._drag_active = False

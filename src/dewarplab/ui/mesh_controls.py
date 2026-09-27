@@ -81,9 +81,7 @@ class MeshControls(QWidget):
 
         mode_layout.addWidget(self._custom_radio)
 
-        self._analysis_result_label = QLabel(
-            self,
-        )
+        self._analysis_result_label = QLabel(self)
 
         self._analysis_result_label.setWordWrap(True)
 
@@ -92,7 +90,7 @@ class MeshControls(QWidget):
         self._rows_spinbox = self._create_density_spinbox(value=8)
 
         rows_control = self._create_stepper_control(
-            spinbox=self._rows_spinbox,
+            spinbox=(self._rows_spinbox),
             decrease_tooltip=("Reducir número de filas"),
             increase_tooltip=("Aumentar número de filas"),
         )
@@ -100,7 +98,7 @@ class MeshControls(QWidget):
         self._columns_spinbox = self._create_density_spinbox(value=8)
 
         columns_control = self._create_stepper_control(
-            spinbox=self._columns_spinbox,
+            spinbox=(self._columns_spinbox),
             decrease_tooltip=("Reducir número de columnas"),
             increase_tooltip=("Aumentar número de columnas"),
         )
@@ -162,7 +160,7 @@ class MeshControls(QWidget):
         self._visibility_checkbox.toggled.connect(self.visibility_changed)
 
         self._detection_checkbox = QCheckBox(
-            "Mostrar detección",
+            "Mostrar detecciones",
             self,
         )
 

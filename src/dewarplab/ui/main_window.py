@@ -33,10 +33,15 @@ from PySide6.QtWidgets import (
 )
 
 from dewarplab.adapters.detection import (
+    PageBoundaryDetectionError,
+    PrintedStructureDetectionError,
     StructureAnalysisError,
     TextLineDetectionError,
     analyze_document_structure,
+    detect_page_boundary_geometry,
+    detect_printed_structure_geometry,
     detect_text_line_geometry,
+    mask_image_to_page_boundary,
 )
 from dewarplab.adapters.documents.document_loader import (
     DocumentLoadError,
@@ -53,6 +58,8 @@ from dewarplab.adapters.imaging import (
     warp_qimage_with_mesh,
 )
 from dewarplab.application import (
+    PageBoundaryGeometry,
+    PrintedStructureGeometry,
     StructureAnalysis,
     TextLineGeometry,
 )
@@ -189,6 +196,7 @@ class PageNavigationField(QLineEdit):
         )
 
         self._slash_label.adjustSize()
+
         self._total_label.adjustSize()
 
         self._position_labels()
@@ -259,6 +267,16 @@ class MainWindow(QMainWindow):
         self._page_text_line_geometries: dict[
             int,
             TextLineGeometry,
+        ] = {}
+
+        self._page_printed_structure_geometries: dict[
+            int,
+            PrintedStructureGeometry,
+        ] = {}
+
+        self._page_boundary_geometries: dict[
+            int,
+            PageBoundaryGeometry,
         ] = {}
 
         self._page_detection_visibility: dict[
@@ -435,7 +453,9 @@ class MainWindow(QMainWindow):
             self,
         )
 
-        self._detect_page_boundaries_action.setEnabled(False)
+        self._detect_page_boundaries_action.triggered.connect(
+            self._detect_current_page_boundary
+        )
 
         self._analyze_structure_action = QAction(
             "Analizar estructura del documento",
@@ -782,6 +802,8 @@ class MainWindow(QMainWindow):
 
         self._corrected_view_action.setEnabled(enabled)
 
+        self._detect_page_boundaries_action.setEnabled(enabled)
+
         self._automatic_mesh_action.setEnabled(enabled)
 
         self._flatten_document_action.setEnabled(enabled)
@@ -899,13 +921,23 @@ class MainWindow(QMainWindow):
         previous_document = self._document
 
         self._document = document
+
         self._current_page_index = 0
+
         self._current_original_image = None
 
         self._page_meshes.clear()
+
         self._page_density_modes.clear()
+
         self._page_structure_analyses.clear()
+
         self._page_text_line_geometries.clear()
+
+        self._page_printed_structure_geometries.clear()
+
+        self._page_boundary_geometries.clear()
+
         self._page_detection_visibility.clear()
 
         self._undo_stack.clear()
@@ -1066,12 +1098,37 @@ class MainWindow(QMainWindow):
     ) -> TextLineGeometry | None:
         return self._page_text_line_geometries.get(self._current_page_index)
 
+    def _printed_structure_geometry_for_current_page(
+        self,
+    ) -> PrintedStructureGeometry | None:
+        return self._page_printed_structure_geometries.get(self._current_page_index)
+
+    def _page_boundary_for_current_page(
+        self,
+    ) -> PageBoundaryGeometry | None:
+        return self._page_boundary_geometries.get(self._current_page_index)
+
     def _detection_visible_for_current_page(
         self,
     ) -> bool:
         return self._page_detection_visibility.get(
             self._current_page_index,
             False,
+        )
+
+    def _detections_available(
+        self,
+        text_geometry: TextLineGeometry | None,
+        printed_structure_geometry: PrintedStructureGeometry | None,
+        page_boundary: PageBoundaryGeometry | None,
+    ) -> bool:
+        return (
+            page_boundary is not None
+            or (text_geometry is not None and text_geometry.trace_count > 0)
+            or (
+                printed_structure_geometry is not None
+                and printed_structure_geometry.segment_count > 0
+            )
         )
 
     def _commit_mesh_point_move(
@@ -1158,7 +1215,68 @@ class MainWindow(QMainWindow):
 
         self._page_detection_visibility[self._current_page_index] = visible
 
+        self._view.set_page_boundary_geometry_visible(visible)
+
+        self._view.set_printed_structure_geometry_visible(visible)
+
         self._view.set_text_line_geometry_visible(visible)
+
+    def _detect_current_page_boundary(
+        self,
+    ) -> None:
+        if self._document is None or self._current_original_image is None:
+            return
+
+        self._ensure_original_view()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        try:
+            rgba = qimage_to_rgba_array(self._current_original_image)
+
+            boundary = detect_page_boundary_geometry(rgba)
+
+        except (
+            QtImageBridgeError,
+            PageBoundaryDetectionError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "No se pudo detectar el límite de la página",
+                str(error),
+            )
+
+            return
+
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._page_boundary_geometries[self._current_page_index] = boundary
+
+        self._page_detection_visibility[self._current_page_index] = True
+
+        self._view.set_page_boundary_geometry(boundary)
+
+        self._view.set_page_boundary_geometry_visible(True)
+
+        self._mesh_controls.set_detection_available(True)
+
+        self._mesh_controls.set_detection_visible(True)
+
+        if boundary.is_full_frame:
+            boundary_text = "marco completo"
+        else:
+            boundary_text = f"{boundary.point_count} puntos"
+
+        self.statusBar().show()
+
+        self.statusBar().showMessage(
+            self._status_message(view_name="Original")
+            + " — "
+            + "Límite de página: "
+            + boundary_text
+        )
 
     def _analyze_current_page(
         self,
@@ -1177,9 +1295,20 @@ class MainWindow(QMainWindow):
         try:
             rgba = qimage_to_rgba_array(self._current_original_image)
 
-            analysis = analyze_document_structure(rgba)
+            page_boundary = detect_page_boundary_geometry(rgba)
 
-            geometry = detect_text_line_geometry(rgba)
+            analysis_image = mask_image_to_page_boundary(
+                rgba,
+                page_boundary,
+            )
+
+            analysis = analyze_document_structure(analysis_image)
+
+            text_geometry = detect_text_line_geometry(analysis_image)
+
+            printed_structure_geometry = detect_printed_structure_geometry(
+                analysis_image
+            )
 
             current_mesh = self._mesh_for_current_page()
 
@@ -1190,6 +1319,8 @@ class MainWindow(QMainWindow):
 
         except (
             QtImageBridgeError,
+            PageBoundaryDetectionError,
+            PrintedStructureDetectionError,
             StructureAnalysisError,
             TextLineDetectionError,
             ValueError,
@@ -1209,15 +1340,21 @@ class MainWindow(QMainWindow):
 
         self._undo_stack.clear()
 
-        self._page_structure_analyses[self._current_page_index] = analysis
+        page_index = self._current_page_index
 
-        self._page_text_line_geometries[self._current_page_index] = geometry
+        self._page_boundary_geometries[page_index] = page_boundary
 
-        self._page_density_modes[self._current_page_index] = MeshControls.MODE_AUTOMATIC
+        self._page_structure_analyses[page_index] = analysis
 
-        self._page_meshes[self._current_page_index] = new_mesh
+        self._page_text_line_geometries[page_index] = text_geometry
 
-        self._page_detection_visibility[self._current_page_index] = True
+        self._page_printed_structure_geometries[page_index] = printed_structure_geometry
+
+        self._page_density_modes[page_index] = MeshControls.MODE_AUTOMATIC
+
+        self._page_meshes[page_index] = new_mesh
+
+        self._page_detection_visibility[page_index] = True
 
         self._mesh_controls.set_density_mode(MeshControls.MODE_AUTOMATIC)
 
@@ -1228,22 +1365,38 @@ class MainWindow(QMainWindow):
 
         self._mesh_controls.set_analysis_summary(
             self._analysis_summary(
-                analysis,
-                geometry,
+                analysis=analysis,
+                text_geometry=(text_geometry),
+                printed_structure_geometry=(printed_structure_geometry),
+                page_boundary=(page_boundary),
             )
         )
 
-        self._mesh_controls.set_detection_available(True)
+        detection_available = self._detections_available(
+            text_geometry=(text_geometry),
+            printed_structure_geometry=(printed_structure_geometry),
+            page_boundary=(page_boundary),
+        )
 
-        self._mesh_controls.set_detection_visible(True)
+        self._mesh_controls.set_detection_available(detection_available)
+
+        self._mesh_controls.set_detection_visible(detection_available)
 
         self._view.set_mesh(new_mesh)
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
-        self._view.set_text_line_geometry(geometry)
+        self._view.set_page_boundary_geometry(page_boundary)
 
-        self._view.set_text_line_geometry_visible(True)
+        self._view.set_printed_structure_geometry(printed_structure_geometry)
+
+        self._view.set_text_line_geometry(text_geometry)
+
+        self._view.set_page_boundary_geometry_visible(detection_available)
+
+        self._view.set_printed_structure_geometry_visible(detection_available)
+
+        self._view.set_text_line_geometry_visible(detection_available)
 
         self.statusBar().showMessage(
             (
@@ -1251,14 +1404,18 @@ class MainWindow(QMainWindow):
                 + " — "
                 + (f"Malla automática: " f"{new_mesh.rows} × " f"{new_mesh.columns}")
                 + " — "
-                + (f"Trazas detectadas: " f"{geometry.trace_count}")
+                + (f"Trazas de texto: " f"{text_geometry.trace_count}")
+                + " — "
+                + (f"Estructuras: " f"{printed_structure_geometry.segment_count}")
             )
         )
 
     def _analysis_summary(
         self,
         analysis: StructureAnalysis,
-        geometry: TextLineGeometry | None,
+        text_geometry: TextLineGeometry | None,
+        printed_structure_geometry: PrintedStructureGeometry | None,
+        page_boundary: PageBoundaryGeometry | None,
     ) -> str:
         summary = (
             "Malla sugerida: "
@@ -1266,8 +1423,23 @@ class MainWindow(QMainWindow):
             f"{analysis.suggested_columns}"
         )
 
-        if geometry is not None:
-            summary += "\n" "Trazas detectadas: " f"{geometry.trace_count}"
+        if page_boundary is not None:
+            if page_boundary.is_full_frame:
+                summary += "\n" "Límite de página: marco completo"
+            else:
+                summary += (
+                    "\n" "Límite de página: " f"{page_boundary.point_count} puntos"
+                )
+
+        if text_geometry is not None:
+            summary += "\n" "Trazas de texto: " f"{text_geometry.trace_count}"
+
+        if printed_structure_geometry is not None:
+            summary += (
+                "\n"
+                "Estructuras impresas: "
+                f"{printed_structure_geometry.segment_count}"
+            )
 
         return summary
 
@@ -1335,16 +1507,7 @@ class MainWindow(QMainWindow):
             columns=new_mesh.columns,
         )
 
-        geometry = self._text_geometry_for_current_page()
-
-        self._mesh_controls.set_detection_available(geometry is not None)
-
-        if geometry is not None:
-            self._view.set_text_line_geometry(geometry)
-
-            self._view.set_text_line_geometry_visible(
-                self._detection_visible_for_current_page()
-            )
+        self._restore_current_detections()
 
     def _reset_current_mesh(
         self,
@@ -1403,14 +1566,42 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
-        geometry = self._text_geometry_for_current_page()
+        self._restore_current_detections()
 
-        if geometry is not None:
-            self._view.set_text_line_geometry(geometry)
+    def _restore_current_detections(
+        self,
+    ) -> None:
+        page_boundary = self._page_boundary_for_current_page()
 
-            self._view.set_text_line_geometry_visible(
-                self._detection_visible_for_current_page()
-            )
+        printed_structure_geometry = self._printed_structure_geometry_for_current_page()
+
+        text_geometry = self._text_geometry_for_current_page()
+
+        detection_available = self._detections_available(
+            text_geometry=(text_geometry),
+            printed_structure_geometry=(printed_structure_geometry),
+            page_boundary=(page_boundary),
+        )
+
+        detection_visible = (
+            detection_available and self._detection_visible_for_current_page()
+        )
+
+        self._view.set_page_boundary_geometry(page_boundary)
+
+        self._view.set_printed_structure_geometry(printed_structure_geometry)
+
+        self._view.set_text_line_geometry(text_geometry)
+
+        self._view.set_page_boundary_geometry_visible(detection_visible)
+
+        self._view.set_printed_structure_geometry_visible(detection_visible)
+
+        self._view.set_text_line_geometry_visible(detection_visible)
+
+        self._mesh_controls.set_detection_available(detection_available)
+
+        self._mesh_controls.set_detection_visible(detection_visible)
 
     def _ensure_original_view(
         self,
@@ -1430,29 +1621,16 @@ class MainWindow(QMainWindow):
 
         mesh = self._mesh_for_current_page()
 
-        geometry = self._text_geometry_for_current_page()
-
         self._view.replace_image(
-            image=self._current_original_image,
+            image=(self._current_original_image),
             mesh=mesh,
         )
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
-        if geometry is not None:
-            self._view.set_text_line_geometry(geometry)
-
-            self._view.set_text_line_geometry_visible(
-                self._detection_visible_for_current_page()
-            )
+        self._restore_current_detections()
 
         self._mesh_controls.set_controls_enabled(True)
-
-        self._mesh_controls.set_detection_available(geometry is not None)
-
-        self._mesh_controls.set_detection_visible(
-            geometry is not None and self._detection_visible_for_current_page()
-        )
 
         self.statusBar().showMessage(self._status_message(view_name="Original"))
 
@@ -1527,9 +1705,21 @@ class MainWindow(QMainWindow):
 
         analysis = self._analysis_for_current_page()
 
-        geometry = self._text_geometry_for_current_page()
+        page_boundary = self._page_boundary_for_current_page()
 
-        detection_visible = self._detection_visible_for_current_page()
+        printed_structure_geometry = self._printed_structure_geometry_for_current_page()
+
+        text_geometry = self._text_geometry_for_current_page()
+
+        detection_available = self._detections_available(
+            text_geometry=(text_geometry),
+            printed_structure_geometry=(printed_structure_geometry),
+            page_boundary=(page_boundary),
+        )
+
+        detection_visible = (
+            detection_available and self._detection_visible_for_current_page()
+        )
 
         self._mesh_controls.set_mesh_shape(
             rows=mesh.rows,
@@ -1543,16 +1733,16 @@ class MainWindow(QMainWindow):
         else:
             self._mesh_controls.set_analysis_summary(
                 self._analysis_summary(
-                    analysis,
-                    geometry,
+                    analysis=analysis,
+                    text_geometry=(text_geometry),
+                    printed_structure_geometry=(printed_structure_geometry),
+                    page_boundary=(page_boundary),
                 )
             )
 
-        self._mesh_controls.set_detection_available(geometry is not None)
+        self._mesh_controls.set_detection_available(detection_available)
 
-        self._mesh_controls.set_detection_visible(
-            geometry is not None and detection_visible
-        )
+        self._mesh_controls.set_detection_visible(detection_visible)
 
         self._view.set_image(
             image=image,
@@ -1561,10 +1751,17 @@ class MainWindow(QMainWindow):
 
         self._view.set_mesh_visible(self._mesh_controls.is_mesh_visible())
 
-        if geometry is not None:
-            self._view.set_text_line_geometry(geometry)
+        self._view.set_page_boundary_geometry(page_boundary)
 
-            self._view.set_text_line_geometry_visible(detection_visible)
+        self._view.set_printed_structure_geometry(printed_structure_geometry)
+
+        self._view.set_text_line_geometry(text_geometry)
+
+        self._view.set_page_boundary_geometry_visible(detection_visible)
+
+        self._view.set_printed_structure_geometry_visible(detection_visible)
+
+        self._view.set_text_line_geometry_visible(detection_visible)
 
         self._mesh_controls.set_controls_enabled(True)
 
