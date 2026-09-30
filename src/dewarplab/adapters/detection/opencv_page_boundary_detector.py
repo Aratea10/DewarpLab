@@ -91,15 +91,82 @@ def _detect_page_boundary_candidate(
     gray = _resize_for_detection(
         _to_grayscale(image)
     )
-    height, width = gray.shape
-    if _looks_like_full_frame_page(
+
+    full_frame_candidate = (
+        _generate_full_frame_candidate(
+            gray
+        )
+    )
+    if full_frame_candidate is not None:
+        return full_frame_candidate
+
+    best_contour = (
+        _select_best_page_contour(gray)
+    )
+    if best_contour is None:
+        return (
+            _fallback_full_frame_candidate()
+        )
+
+    spread_candidate = (
+        _generate_spread_candidate(
+            gray,
+            best_contour,
+        )
+    )
+    if spread_candidate is not None:
+        return spread_candidate
+
+    clipped_page_candidate = _generate_clipped_page_candidate(
+        gray,
+        best_contour,
+    )
+    if (
+        clipped_page_candidate
+        is not None
+    ):
+        return clipped_page_candidate
+
+    single_page_candidate = (
+        _generate_single_page_candidate(
+            best_contour,
+            width=gray.shape[1],
+            height=gray.shape[0],
+        )
+    )
+    if (
+        single_page_candidate
+        is not None
+    ):
+        return single_page_candidate
+
+    return (
+        _fallback_full_frame_candidate()
+    )
+
+
+def _generate_full_frame_candidate(
+    gray: NDArray[np.uint8],
+) -> PageBoundaryCandidate | None:
+    if not _looks_like_full_frame_page(
         gray
     ):
-        return _full_frame_candidate(
-            PageBoundaryCandidateSource.FULL_FRAME
-        )
-    best_contour = None
+        return None
+
+    return _full_frame_candidate(
+        PageBoundaryCandidateSource.FULL_FRAME
+    )
+
+
+def _select_best_page_contour(
+    gray: NDArray[np.uint8],
+) -> NDArray[np.int32] | None:
+    height, width = gray.shape
+    best_contour: (
+        NDArray[np.int32] | None
+    ) = None
     best_score = float("-inf")
+
     for mask in _candidate_masks(gray):
         prepared = (
             _prepare_candidate_mask(
@@ -108,7 +175,9 @@ def _detect_page_boundary_candidate(
         )
         contour, score = (
             _best_page_contour(
-                prepared, width, height
+                prepared,
+                width,
+                height,
             )
         )
         if (
@@ -117,53 +186,84 @@ def _detect_page_boundary_candidate(
         ):
             best_contour = contour
             best_score = score
-    if best_contour is None:
-        return _full_frame_candidate(
-            PageBoundaryCandidateSource.FALLBACK_FULL_FRAME
-        )
-    spread_boundary = (
+
+    return best_contour
+
+
+def _generate_spread_candidate(
+    gray: NDArray[np.uint8],
+    contour: NDArray[np.int32],
+) -> PageBoundaryCandidate | None:
+    geometry = (
         _detect_primary_page_in_spread(
-            gray, best_contour
+            gray,
+            contour,
         )
     )
-    if spread_boundary is not None:
-        return PageBoundaryCandidate(
-            geometry=spread_boundary,
-            source=PageBoundaryCandidateSource.SPREAD,
-        )
+    if geometry is None:
+        return None
+
+    return PageBoundaryCandidate(
+        geometry=geometry,
+        source=PageBoundaryCandidateSource.SPREAD,
+    )
+
+
+def _generate_clipped_page_candidate(
+    gray: NDArray[np.uint8],
+    contour: NDArray[np.int32],
+) -> PageBoundaryCandidate | None:
+    # Reserved for a dedicated clipped-page hypothesis. Keeping it
+    # inactive here makes this refactor behavior-preserving while
+    # giving clipped pages an independent place to evolve.
+    del gray, contour
+    return None
+
+
+def _generate_single_page_candidate(
+    contour: NDArray[np.int32],
+    *,
+    width: int,
+    height: int,
+) -> PageBoundaryCandidate | None:
     image_area = float(width * height)
     if image_area <= 0:
-        return _full_frame_candidate(
-            PageBoundaryCandidateSource.FALLBACK_FULL_FRAME
-        )
+        return None
+
     area_ratio = (
-        float(
-            cv2.contourArea(
-                best_contour
-            )
-        )
+        float(cv2.contourArea(contour))
         / image_area
     )
     if (
         area_ratio
         >= MAX_PAGE_AREA_RATIO
     ):
-        return _full_frame_candidate(
-            PageBoundaryCandidateSource.FALLBACK_FULL_FRAME
-        )
+        return None
+
     points = _simplify_contour(
-        best_contour, width, height
+        contour,
+        width,
+        height,
     )
     if len(points) < 4:
-        return _full_frame_candidate(
-            PageBoundaryCandidateSource.FALLBACK_FULL_FRAME
-        )
+        return None
+
     return PageBoundaryCandidate(
         geometry=PageBoundaryGeometry(
             points=points,
             is_full_frame=False,
         ),
-        source=PageBoundaryCandidateSource.CONTOUR,
+        source=(
+            PageBoundaryCandidateSource.SINGLE_PAGE
+        ),
+    )
+
+
+def _fallback_full_frame_candidate() -> (
+    PageBoundaryCandidate
+):
+    return _full_frame_candidate(
+        PageBoundaryCandidateSource.FALLBACK_FULL_FRAME
     )
 
 

@@ -11,7 +11,8 @@ class PageBoundaryCandidateSource(
 ):
     FULL_FRAME = "full_frame"
     SPREAD = "spread"
-    CONTOUR = "contour"
+    SINGLE_PAGE = "single_page"
+    CLIPPED_PAGE = "clipped_page"
     FALLBACK_FULL_FRAME = (
         "fallback_full_frame"
     )
