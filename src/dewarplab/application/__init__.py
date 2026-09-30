@@ -1,3 +1,7 @@
+from dewarplab.application.page_boundary_candidate import (
+    PageBoundaryCandidate,
+    PageBoundaryCandidateSource,
+)
 from dewarplab.application.page_boundary_geometry import (
     PageBoundaryGeometry,
 )
@@ -17,6 +21,8 @@ from dewarplab.application.text_line_geometry import (
 
 __all__ = [
     "NormalizedPoint",
+    "PageBoundaryCandidate",
+    "PageBoundaryCandidateSource",
     "PageBoundaryGeometry",
     "PrintedStructureGeometry",
     "PrintedStructureOrientation",
