@@ -253,7 +253,7 @@ class DocumentView(QGraphicsView):
         if geometry is None or self._pixmap_item is None:
             return
 
-        boundary_color = QColor("#ffd60a")
+        boundary_color = QColor("#64D2FF")
 
         self._page_boundary_overlay = PageBoundaryOverlay(
             scene=self._scene,
